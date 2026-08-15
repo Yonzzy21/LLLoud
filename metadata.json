@@ -1,0 +1,11 @@
+{
+  "name": "Remix Loud",
+  "description": "NYC Sound Map \u0026 Live Decibel Meter with geolocation noise logging and environmental sound density.",
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

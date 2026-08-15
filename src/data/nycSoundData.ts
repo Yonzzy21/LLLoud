@@ -1,0 +1,263 @@
+import { SoundDensityZone } from '../types';
+
+export const NYC_SOUND_ZONES: SoundDensityZone[] = [
+  // Subway Stations & Screeching Curves
+  {
+    id: 'subway-grand-central',
+    name: 'Grand Central – 42nd St (4/5/6 Express Curve)',
+    borough: 'Manhattan',
+    type: 'subway-screech',
+    latitude: 40.7517,
+    longitude: -73.9767,
+    radiusMeters: 280,
+    baseDecibels: 88,
+    peakDecibels: 104,
+    description: 'High-frequency wheel flange squeal and heavy steel-wheel rumble on tight curved tracks.',
+    audioSignature: 'screech'
+  },
+  {
+    id: 'subway-times-sq',
+    name: 'Times Square – 42nd St Subway Complex',
+    borough: 'Manhattan',
+    type: 'subway-screech',
+    latitude: 40.7556,
+    longitude: -73.9866,
+    radiusMeters: 320,
+    baseDecibels: 86,
+    peakDecibels: 99,
+    description: 'N/Q/R/W and 1/2/3 platform roar, pneumatic air brakes, and pedestrian concourse acoustic density.',
+    audioSignature: 'screech'
+  },
+  {
+    id: 'subway-union-sq',
+    name: '14th St – Union Square (4/5/6 Moving Platform Gap)',
+    borough: 'Manhattan',
+    type: 'subway-screech',
+    latitude: 40.7359,
+    longitude: -73.9911,
+    radiusMeters: 250,
+    baseDecibels: 84,
+    peakDecibels: 98,
+    description: 'Curved platform screech combined with automated platform extender warnings and subway rumble.',
+    audioSignature: 'screech'
+  },
+  {
+    id: 'subway-atlantic-ave',
+    name: 'Atlantic Terminal / Barclays Center Hub',
+    borough: 'Brooklyn',
+    type: 'subway-screech',
+    latitude: 40.6845,
+    longitude: -73.9774,
+    radiusMeters: 300,
+    baseDecibels: 83,
+    peakDecibels: 96,
+    description: 'Intermodal transit convergence: 9 subway lines + LIRR diesel/electric rail deceleration.',
+    audioSignature: 'screech'
+  },
+  {
+    id: 'subway-columbus-circle',
+    name: '59th St – Columbus Circle',
+    borough: 'Manhattan',
+    type: 'subway-screech',
+    latitude: 40.7681,
+    longitude: -73.9819,
+    radiusMeters: 260,
+    baseDecibels: 82,
+    peakDecibels: 95,
+    description: 'A/B/C/D & 1 train high speed track pass-through acoustic vibrations.',
+    audioSignature: 'screech'
+  },
+
+  // Traffic Jams, Emergency Sirens & Bridge Ramps
+  {
+    id: 'siren-midtown-east',
+    name: 'Bellevue / NYU Langone Emergency Siren Corridor (1st Ave)',
+    borough: 'Manhattan',
+    type: 'traffic-siren',
+    latitude: 40.7397,
+    longitude: -73.9754,
+    radiusMeters: 450,
+    baseDecibels: 82,
+    peakDecibels: 108,
+    description: 'Frequent FDNY & EMS dual-tone sirens echoing off high-rise canyon walls toward trauma centers.',
+    audioSignature: 'siren'
+  },
+  {
+    id: 'traffic-times-square-surface',
+    name: 'Times Square Crossroads (7th Ave & Broadway)',
+    borough: 'Manhattan',
+    type: 'traffic-siren',
+    latitude: 40.7580,
+    longitude: -73.9855,
+    radiusMeters: 350,
+    baseDecibels: 81,
+    peakDecibels: 94,
+    description: 'Dense yellow cab honking, tour bus engine idling, electronic billboards, and dense street crowds.',
+    audioSignature: 'traffic'
+  },
+  {
+    id: 'traffic-herald-sq',
+    name: 'Herald Square (34th St & 6th Ave)',
+    borough: 'Manhattan',
+    type: 'traffic-siren',
+    latitude: 40.7496,
+    longitude: -73.9878,
+    radiusMeters: 300,
+    baseDecibels: 79,
+    peakDecibels: 93,
+    description: 'Gridlocked cross-town bus lane, delivery truck air brakes, and pedestrian shopping hub chatter.',
+    audioSignature: 'traffic'
+  },
+  {
+    id: 'traffic-brooklyn-bridge',
+    name: 'Brooklyn Bridge Manhattan Ramp & FDR Merge',
+    borough: 'Manhattan',
+    type: 'traffic-siren',
+    latitude: 40.7126,
+    longitude: -74.0044,
+    radiusMeters: 380,
+    baseDecibels: 80,
+    peakDecibels: 92,
+    description: 'Continuous tire friction on roadway grates, engine roar, and merging commuter traffic.',
+    audioSignature: 'traffic'
+  },
+  {
+    id: 'traffic-holland-tunnel',
+    name: 'Holland Tunnel Approach (Canal & Varick St)',
+    borough: 'Manhattan',
+    type: 'traffic-siren',
+    latitude: 40.7233,
+    longitude: -74.0083,
+    radiusMeters: 360,
+    baseDecibels: 83,
+    peakDecibels: 97,
+    description: 'Heavy semi-truck idling, exhaust rumble, and impatient horn blasts entering interstate tunnel.',
+    audioSignature: 'traffic'
+  },
+  {
+    id: 'traffic-queensboro-bridge',
+    name: 'Ed Koch Queensboro Bridge Approach (Queens Plaza)',
+    borough: 'Queens',
+    type: 'traffic-siren',
+    latitude: 40.7505,
+    longitude: -73.9400,
+    radiusMeters: 400,
+    baseDecibels: 82,
+    peakDecibels: 96,
+    description: 'Double-decker bridge acoustics with overhead 7/N/W elevated train roar and multi-lane vehicular gridlock.',
+    audioSignature: 'traffic'
+  },
+  {
+    id: 'traffic-hub-bronx',
+    name: 'The Hub (3rd Ave & 149th St, South Bronx)',
+    borough: 'Bronx',
+    type: 'traffic-siren',
+    latitude: 40.8160,
+    longitude: -73.9174,
+    radiusMeters: 320,
+    baseDecibels: 80,
+    peakDecibels: 94,
+    description: 'Elevated 2/5 train rumble over retail corridor, street merchant speakers, and municipal bus interchange.',
+    audioSignature: 'traffic'
+  },
+
+  // Quiet Havens & Sanctuaries (Acoustic low points)
+  {
+    id: 'quiet-central-park-ramble',
+    name: 'The Ramble (Central Park Woodland Oasis)',
+    borough: 'Manhattan',
+    type: 'quiet-haven',
+    latitude: 40.7766,
+    longitude: -73.9690,
+    radiusMeters: 350,
+    baseDecibels: 42,
+    peakDecibels: 54,
+    description: 'Dense canopy buffering urban noise; bird songs, rustling foliage, and gentle Gill stream trickles.',
+    audioSignature: 'park'
+  },
+  {
+    id: 'quiet-cloisters',
+    name: 'The Cloisters & Fort Tryon Park',
+    borough: 'Manhattan',
+    type: 'quiet-haven',
+    latitude: 40.8649,
+    longitude: -73.9317,
+    radiusMeters: 400,
+    baseDecibels: 41,
+    peakDecibels: 52,
+    description: 'Elevated Hudson River bluffs with monastic courtyard silence and gentle river breezes.',
+    audioSignature: 'park'
+  },
+  {
+    id: 'quiet-greenwood',
+    name: 'Green-Wood Cemetery Historic Grounds',
+    borough: 'Brooklyn',
+    type: 'quiet-haven',
+    latitude: 40.6582,
+    longitude: -73.9942,
+    radiusMeters: 600,
+    baseDecibels: 43,
+    peakDecibels: 55,
+    description: '478 acres of rolling hills, historic mausoleums, and serene bird sanctuary shielding city din.',
+    audioSignature: 'park'
+  },
+  {
+    id: 'quiet-botanic-garden',
+    name: 'Brooklyn Botanic Garden (Japanese Garden)',
+    borough: 'Brooklyn',
+    type: 'quiet-haven',
+    latitude: 40.6677,
+    longitude: -73.9634,
+    radiusMeters: 350,
+    baseDecibels: 44,
+    peakDecibels: 56,
+    description: 'Enclosed stone and pond landscape with waterfall hum dampening surrounding Eastern Parkway traffic.',
+    audioSignature: 'park'
+  },
+  {
+    id: 'quiet-wave-hill',
+    name: 'Wave Hill Public Garden (Hudson River Overlook)',
+    borough: 'Bronx',
+    type: 'quiet-haven',
+    latitude: 40.8978,
+    longitude: -73.9118,
+    radiusMeters: 450,
+    baseDecibels: 40,
+    peakDecibels: 50,
+    description: 'Peaceful garden estate perched above the Palisades and Hudson with deep ambient stillness.',
+    audioSignature: 'park'
+  },
+  {
+    id: 'quiet-snug-harbor',
+    name: 'Snug Harbor Cultural Center & Scholar\'s Garden',
+    borough: 'Staten Island',
+    type: 'quiet-haven',
+    latitude: 40.6433,
+    longitude: -74.1023,
+    radiusMeters: 500,
+    baseDecibels: 42,
+    peakDecibels: 53,
+    description: 'Traditional Chinese walled garden offering acoustic seclusion and water feature harmonics.',
+    audioSignature: 'park'
+  }
+];
+
+// NYC Neighborhood reference points for approximate zone lookup
+export const NYC_NEIGHBORHOODS = [
+  { name: 'Midtown Manhattan', lat: 40.7549, lon: -73.9840, borough: 'Manhattan', baseNoise: 76 },
+  { name: 'Financial District / Wall St', lat: 40.7075, lon: -74.0090, borough: 'Manhattan', baseNoise: 72 },
+  { name: 'Greenwich Village', lat: 40.7336, lon: -74.0027, borough: 'Manhattan', baseNoise: 64 },
+  { name: 'Upper East Side', lat: 40.7736, lon: -73.9566, borough: 'Manhattan', baseNoise: 66 },
+  { name: 'Upper West Side', lat: 40.7870, lon: -73.9754, borough: 'Manhattan', baseNoise: 65 },
+  { name: 'Harlem', lat: 40.8116, lon: -73.9465, borough: 'Manhattan', baseNoise: 71 },
+  { name: 'DUMBO / Brooklyn Heights', lat: 40.7033, lon: -73.9890, borough: 'Brooklyn', baseNoise: 68 },
+  { name: 'Williamsburg', lat: 40.7143, lon: -73.9570, borough: 'Brooklyn', baseNoise: 70 },
+  { name: 'Bushwick', lat: 40.6944, lon: -73.9213, borough: 'Brooklyn', baseNoise: 69 },
+  { name: 'Park Slope', lat: 40.6710, lon: -73.9770, borough: 'Brooklyn', baseNoise: 62 },
+  { name: 'Long Island City', lat: 40.7447, lon: -73.9485, borough: 'Queens', baseNoise: 73 },
+  { name: 'Astoria', lat: 40.7644, lon: -73.9235, borough: 'Queens', baseNoise: 67 },
+  { name: 'Flushing', lat: 40.7675, lon: -73.8331, borough: 'Queens', baseNoise: 75 },
+  { name: 'Mott Haven / South Bronx', lat: 40.8090, lon: -73.9250, borough: 'Bronx', baseNoise: 74 },
+  { name: 'Riverdale', lat: 40.8900, lon: -73.9125, borough: 'Bronx', baseNoise: 54 },
+  { name: 'St. George', lat: 40.6437, lon: -74.0736, borough: 'Staten Island', baseNoise: 63 }
+];
