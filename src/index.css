@@ -1,1 +1,266 @@
 @import "tailwindcss";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   QUIET — theme
+   ---------------------------------------------------------------------------
+   The app was built on a dark stone/amber palette. Rather than rewrite every
+   component's class list, the palette itself is remapped here: Tailwind v4
+   utilities resolve to these variables, so `bg-stone-950` becomes paper and
+   `text-stone-100` becomes ink everywhere at once.
+
+   The scale inverts — the original 950 was the darkest, and is now the
+   lightest — because the app went from a dark theme to a paper one.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@theme {
+  /* — paper and ink — */
+  --color-stone-950: #FFFCF3;  /* app background            */
+  --color-stone-900: #FFFFFF;  /* cards, the map plate      */
+  --color-stone-800: #E5D2B9;  /* borders, rules            */
+  --color-stone-700: #D8BF9C;  /* heavier borders           */
+  --color-stone-600: #C3AE93;
+  --color-stone-500: #AEA8A0;  /* muted type                */
+  --color-stone-400: #AEA8A0;  /* secondary type            */
+  --color-stone-300: #4A443C;
+  --color-stone-200: #2A2620;
+  --color-stone-100: #1C1A16;  /* primary type              */
+  --color-stone-50:  #1C1A16;
+
+  --color-zinc-950: #FFFCF3;
+  --color-zinc-900: #FFFFFF;
+  --color-zinc-800: #E5D2B9;
+  --color-zinc-100: #1C1A16;
+
+  /* — primary action: ink, not amber — */
+  --color-amber-500: #1C1A16;
+  --color-amber-400: #3A342C;
+  --color-amber-300: #1C1A16;
+  --color-amber-950: #FFFCF3;
+
+  /* — the loudness scale is the ONLY colour in the app —
+       1 quiet · 2 almost quiet · 3 loud · 4 very loud · 5 too loud          */
+  --color-quiet-1: #E4ECF2;
+  --color-quiet-2: #FFD6FF;
+  --color-quiet-3: #87A5FF;
+  --color-quiet-4: #FF4938;
+  --color-quiet-5: #60545A;
+
+  /* dataset + route accents map onto that scale, so nothing sits outside it */
+  --color-emerald-500: #1C1A16;  /* quietest route, point A */
+  --color-emerald-400: #1C1A16;
+  --color-emerald-300: #4A443C;
+  --color-rose-500:    #FF4938;  /* fastest route, point B  */
+  --color-rose-400:    #FF4938;
+  --color-rose-300:    #FF4938;
+  --color-cyan-500:    #87A5FF;  /* noise-free route        */
+  --color-cyan-400:    #87A5FF;
+  --color-cyan-300:    #6A8CE8;
+  --color-purple-500:  #FFD6FF;
+  --color-purple-300:  #B98CB9;
+  --color-sky-500:     #1C1A16;
+  --color-sky-400:     #1C1A16;
+  --color-sky-300:     #4A443C;
+  --color-orange-500:  #87A5FF;
+  --color-yellow-500:  #60545A;
+  --color-red-500:     #FF4938;
+
+  /* TWO VOICES.
+     Helvetica is the city's voice — street names, labels, chrome. Neutral,
+     infrastructural, the typography of signage.
+     Hedvig Letters Serif is yours — the few things that are actually about
+     you and your walk: where you are, where you are going, how loud it is. */
+  --font-sans: Helvetica, 'Helvetica Neue', Arial, sans-serif;
+  --font-serif: 'Hedvig Letters Serif', ui-serif, Georgia, 'Times New Roman', serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, 'Roboto Mono', monospace;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   THE MAP
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* map background is white; the #FFFCF3 overlay is painted by the design
+   layer, above the tiles and below the grid */
+.leaflet-container {
+  background: #FFFFFF;
+  font-family: var(--font-sans);
+}
+
+/* street names and every other map label: the city's own voice */
+.leaflet-tile-pane,
+.leaflet-container .leaflet-marker-pane,
+.leaflet-container .leaflet-tooltip {
+  font-family: var(--font-sans);
+}
+
+/* The city tiles are greyscaled here and tinted by the design layer, which
+   multiplies them by COLORS.mapTint. Multiply maps white exactly onto the
+   tint, so that one token IS the map's colour — no guessing at sepia and
+   saturate values, which is how the map ended up yellow before. */
+.quiet-tiles {
+  filter: grayscale(1) contrast(0.88) brightness(1.04);
+}
+
+.quiet-canvas {
+  image-rendering: pixelated; /* the pixels stay pixels */
+}
+
+/* Marks, not badges. You and your destination are bare shapes on the map —
+   no plate, no halo, no letter in a box. Leaflet gives div icons a white box
+   with a grey border by default; this removes it everywhere. */
+.leaflet-div-icon,
+.leaflet-marker-icon {
+  background: none;
+  border: none;
+}
+
+
+/* Leaflet makes markers keyboard-focusable, so the browser draws its own blue
+   focus ring around them — that is the blue box that appears around you when
+   you drag. Kill it for pointer use, but keep a mark for keyboard users:
+   dropping focus styling entirely would make the app unusable without a
+   mouse. :focus-visible only fires for keyboard, so this costs nothing. */
+.leaflet-marker-icon:focus,
+.leaflet-container a:focus,
+.leaflet-interactive:focus { outline: none; }
+
+.leaflet-marker-icon:focus-visible,
+.leaflet-interactive:focus-visible {
+  outline: 1px solid #1C1A16;
+  outline-offset: 3px;
+}
+
+/* THE PATH ACROSS SOUND.
+   Routes live in Leaflet's overlay pane (z 400), above the loudness canvas
+   (z 350) — so the path is always the top layer. The blend has to be applied
+   to the whole pane rather than the path itself: the pane's z-index makes it a
+   stacking context, and a mix-blend-mode set on a child inside that context
+   would only blend against its siblings, never against the pixels below.
+
+   Multiply, not divide: multiply darkens the path in proportion to what it
+   crosses, so quiet stretches stay flat #AEA8A0 and a very-loud crossing goes
+   much darker. Divide (color-dodge) would blow the line out to white over
+   noise — brightest exactly where the walk is worst, which reads backwards. */
+.leaflet-overlay-pane {
+  mix-blend-mode: multiply;
+}
+
+/* You and your destination blend the same way the path does, so the three
+   read as one object laid over the sound rather than three things floating
+   above it. Both marks are ink, and multiply only ever darkens — so they go
+   near-black in a loud zone and stay legible everywhere. The blend has to sit
+   on the pane, not the marker: the pane's z-index is its own stacking
+   context, and a blend inside it would never reach the pixels below.
+
+   Labels are deliberately left out — they are read, not felt. */
+.leaflet-marker-pane {
+  mix-blend-mode: multiply;
+}
+
+/* white is the identity for multiply, so the invisible hit-target circles in
+   this pane stay invisible — no change needed there */
+.quiet-route {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Popups in paper, not in Leaflet's default white-and-shadow */
+.leaflet-popup-content-wrapper {
+  background: #FFFCF3;
+  color: #1C1A16;
+  border: 1px solid #E5D2B9;
+  border-radius: 3px;
+  box-shadow: 0 10px 30px -12px rgba(60, 45, 25, 0.35);
+}
+.leaflet-popup-tip {
+  background: #FFFCF3;
+  border: 1px solid #E5D2B9;
+}
+.leaflet-popup-close-button { color: #AEA8A0 !important; }
+
+.leaflet-tooltip {
+  background: #FFFCF3;
+  color: #1C1A16;
+  border: 1px solid #E5D2B9;
+  border-radius: 3px;
+  box-shadow: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.leaflet-tooltip-top:before { border-top-color: #E5D2B9; }
+.leaflet-tooltip-bottom:before { border-bottom-color: #E5D2B9; }
+.leaflet-tooltip-left:before { border-left-color: #E5D2B9; }
+.leaflet-tooltip-right:before { border-right-color: #E5D2B9; }
+
+.leaflet-control-attribution {
+  background: rgba(255, 252, 243, 0.8) !important;
+  color: #AEA8A0 !important;
+  font-size: 9px !important;
+}
+.leaflet-control-attribution a { color: #AEA8A0 !important; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CHROME
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+body {
+  background: #FFFCF3;
+  color: #1C1A16;
+}
+
+/* The design is built on square corners and hairlines, not shadows and blur.
+   These soften the app's existing heavy chrome without touching every file. */
+.shadow-2xl, .shadow-xl { box-shadow: 0 8px 24px -16px rgba(60, 45, 25, 0.30) !important; }
+.backdrop-blur-xl, .backdrop-blur-md { backdrop-filter: none !important; }
+
+/* Corners: 3px everywhere. The design is built on square edges and hairlines,
+   so rounding is a whisper rather than a shape. */
+.rounded-3xl, .rounded-2xl, .rounded-xl,
+.rounded-lg, .rounded-md, .rounded { border-radius: 3px !important; }
+
+/* The app was written for a dark theme, so it reaches for white type in a lot
+   of places. On paper that type would simply disappear — it becomes ink.
+   (`bg-white` is left alone: the map plate genuinely is white.) */
+.text-white,
+.hover\:text-white:hover { color: #1C1A16 !important; }
+
+/* modal scrims: paper, not black */
+.bg-black\/80 { background-color: rgba(60, 45, 25, 0.28) !important; }
+.bg-black\/40 { background-color: rgba(60, 45, 25, 0.10) !important; }
+.border-white\/10 { border-color: #E5D2B9 !important; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   POINT A / POINT B
+   Choosing where you are and where you are going is the one thing this app
+   is for, so it is set four times the size of everything else. Every other
+   label in the interface is chrome; this is the interface.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#mobile-origin-input, #mobile-destination-input,
+#desktop-origin-input, #desktop-destination-input {
+  font-family: var(--font-serif) !important;
+  font-size: 40px !important;      /* 4 x the 10px chrome size */
+  line-height: 1.05 !important;
+  font-weight: 500;
+  padding-top: 6px !important;
+  padding-bottom: 6px !important;
+}
+#mobile-origin-input::placeholder, #mobile-destination-input::placeholder,
+#desktop-origin-input::placeholder, #desktop-destination-input::placeholder {
+  font-family: var(--font-serif);
+  font-size: 40px;
+  line-height: 1.05;
+}
+
+/* the loudness reading around you is about you, not about the city */
+.quiet-reading { font-family: var(--font-serif); }
+
+/* the radar ping reads as noise in a paper interface — hold it back */
+@keyframes ping {
+  0%   { transform: scale(1);   opacity: 0.35; }
+  75%  { transform: scale(1.9); opacity: 0; }
+  100% { transform: scale(1.9); opacity: 0; }
+}
+
+::selection { background: #E4ECF2; color: #1C1A16; }

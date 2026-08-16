@@ -26,7 +26,11 @@ import {
   Waypoint 
 } from '../types';
 import { fetchLiveNyc311NoiseComplaints } from '../utils/nycOpenData';
-import { getCategoryColor } from '../utils/audioEngine';
+import { QuietMapLayer, type QuietZone } from '../design/QuietMapLayer';
+import { COLORS, DESIGN, LEVELS, levelFromDb } from '../design/tokens';
+
+const FONT = '-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif';
+const MONO = 'ui-monospace, SF Mono, Menlo, monospace';
 
 interface SoundMapProps {
   userLat: number | null;
@@ -36,7 +40,6 @@ interface SoundMapProps {
   logs: SoundLogEntry[];
   activeRoute?: NavRoute | null;
   fastestRoute?: NavRoute | null;
-  quietestRoute?: NavRoute | null;
   avoidNoiseRoute?: NavRoute | null;
   origin?: Waypoint;
   destination?: Waypoint;
@@ -59,7 +62,6 @@ export const SoundMap: React.FC<SoundMapProps> = ({
   logs,
   activeRoute,
   fastestRoute,
-  quietestRoute,
   avoidNoiseRoute,
   origin,
   destination,
@@ -79,6 +81,7 @@ export const SoundMap: React.FC<SoundMapProps> = ({
   const userAccuracyPulseRef = useRef<L.Circle | null>(null);
   const simMarkerRef = useRef<L.Marker | null>(null);
   const simPulseRef = useRef<L.Circle | null>(null);
+  const quietLayerRef = useRef<QuietMapLayer | null>(null);
 
   // Callback refs — always hold the latest function so Leaflet closures never go stale
   const onMapClickSetOriginRef = useRef(onMapClickSetOrigin);
@@ -123,12 +126,24 @@ export const SoundMap: React.FC<SoundMapProps> = ({
       zoomControl: false,
     });
 
-    // CartoDB tile layer
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    // The real city, labels and all, warmed into the paper palette by CSS.
+    // It has to stay readable through the sound field — this is still a map.
+    const tiles = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
       attribution: '&copy; CARTO &copy; OSM',
       maxZoom: 19,
       subdomains: 'abcd',
+      opacity: QuietMapLayer.cityOpacityFor(map.getZoom()),
+      className: 'quiet-tiles',
     }).addTo(map);
+
+    // zoomed out this is a soundscape; zoomed in you are navigating, and the
+    // street names have to come through the field
+    map.on('zoomend', () => tiles.setOpacity(QuietMapLayer.cityOpacityFor(map.getZoom())));
+
+    // The design layer: paper grid + generative loudness pixels.
+    const quiet = new QuietMapLayer();
+    quiet.addTo(map);
+    quietLayerRef.current = quiet;
 
     const routesGroup = L.layerGroup().addTo(map);
     const zonesGroup = L.layerGroup().addTo(map);
@@ -142,28 +157,28 @@ export const SoundMap: React.FC<SoundMapProps> = ({
       const lon = e.latlng.lng;
 
       const popupHtml = `
-        <div style="font-family: system-ui, sans-serif; min-width: 175px; text-align:center; color:#18181b; padding: 2px;">
-          <div style="font-size: 11px; font-weight: 800; margin-bottom: 6px; color:#27272a;">
-            📍 Location Selected
+        <div style="font-family:${FONT}; min-width:170px; color:${COLORS.ink}; padding:1px;">
+          <div style="font-family:${MONO}; font-size:9px; letter-spacing:.12em; text-transform:uppercase; color:${COLORS.inkSoft}; margin-bottom:7px;">
+            Location selected
           </div>
-          <div style="display:flex; flex-direction:column; gap:4px;">
-            <button 
+          <div style="display:flex; flex-direction:column; gap:5px;">
+            <button
               id="map-popup-set-a"
-              style="background:#10b981; color:white; border:none; padding:5px 8px; border-radius:6px; font-size:11px; font-weight:700; cursor:pointer;"
+              style="background:${COLORS.ink}; color:${COLORS.paper}; border:none; padding:7px 9px; border-radius:6px; font-family:${FONT}; font-size:11px; font-weight:550; cursor:pointer; text-align:left;"
             >
-              🟢 Set Start (Point A)
+              Set start
             </button>
-            <button 
+            <button
               id="map-popup-set-b"
-              style="background:#f43f5e; color:white; border:none; padding:5px 8px; border-radius:6px; font-size:11px; font-weight:700; cursor:pointer;"
+              style="background:${COLORS.paper}; color:${COLORS.ink}; border:1px solid ${COLORS.ink}; padding:7px 9px; border-radius:6px; font-family:${FONT}; font-size:11px; font-weight:550; cursor:pointer; text-align:left;"
             >
-              🏁 Set Destination (Point B)
+              Set destination
             </button>
-            <button 
+            <button
               id="map-popup-log-noise"
-              style="background:#f59e0b; color:#18181b; border:none; padding:5px 8px; border-radius:6px; font-size:11px; font-weight:800; cursor:pointer; margin-top:2px;"
+              style="background:transparent; color:${COLORS.inkSoft}; border:1px solid ${COLORS.grid}; padding:7px 9px; border-radius:6px; font-family:${FONT}; font-size:11px; font-weight:500; cursor:pointer; text-align:left;"
             >
-              ⚠️ Log Noise Spot Here
+              Log a sound here
             </button>
           </div>
         </div>
@@ -219,10 +234,20 @@ export const SoundMap: React.FC<SoundMapProps> = ({
 
     return () => {
       resizeObserver.disconnect();
+      quietLayerRef.current = null;
       map.remove();
       mapInstanceRef.current = null;
     };
   }, []);
+
+  // Feed the design layer: your position, and your live ambient reading
+  useEffect(() => {
+    quietLayerRef.current?.setUser(userLat, userLon);
+  }, [userLat, userLon]);
+
+  useEffect(() => {
+    quietLayerRef.current?.setAmbientDb(currentDb);
+  }, [currentDb]);
 
   // Update Live GPS Location Marker & Radar Pulse
   useEffect(() => {
@@ -241,28 +266,27 @@ export const SoundMap: React.FC<SoundMapProps> = ({
       return;
     }
 
+    // You are a hole in the drawing, not a pin on top of it — a plain ink dot
+    // sitting inside the clearing the design layer opens around you.
     const liveGpsIcon = L.divIcon({
       className: 'live-gps-marker',
       html: `
-        <div style="position:relative; width:28px; height:28px; display:flex; align-items:center; justify-content:center;">
-          <div style="position:absolute; width:100%; height:100%; border-radius:50%; background:#38bdf8; opacity:0.4; animation: ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>
-          <div style="background:#0284c7; width:18px; height:18px; border-radius:50%; border:3px solid #ffffff; box-shadow:0 0 10px rgba(14, 165, 233, 0.8);"></div>
-        </div>
+        <div style="width:12px; height:12px; box-shadow:inset 0 0 0 2px ${COLORS.ink};"></div>
       `,
-      iconSize: [28, 28],
-      iconAnchor: [14, 14],
+      iconSize: [12, 12],
+      iconAnchor: [6, 6],
     });
 
     if (!userMarkerRef.current) {
       userMarkerRef.current = L.marker([userLat, userLon], { icon: liveGpsIcon, zIndexOffset: 1000 }).addTo(map);
-      userMarkerRef.current.bindTooltip('<b>📍 My Live Location</b>', { permanent: false, direction: 'top' });
+      userMarkerRef.current.bindTooltip('You', { permanent: false, direction: 'top' });
 
       userAccuracyPulseRef.current = L.circle([userLat, userLon], {
-        radius: 35,
-        color: '#0284c7',
-        fillColor: '#38bdf8',
-        fillOpacity: 0.15,
+        radius: DESIGN.dissolve.youRadiusMeters,
+        color: COLORS.gridDeep,
+        fillOpacity: 0,
         weight: 1,
+        dashArray: '2, 4',
       }).addTo(map);
     } else {
       userMarkerRef.current.setLatLng([userLat, userLon]);
@@ -282,45 +306,81 @@ export const SoundMap: React.FC<SoundMapProps> = ({
     if (!showCommunityLayer) return;
 
     communityReports.forEach((report) => {
-      const isQuiet = report.noiseType === 'quiet-spot';
-      const color = isQuiet ? '#10b981' : '#f59e0b';
-      const iconEmoji = isQuiet ? '🌿' : '⚠️';
+      const level = levelFromDb(report.decibels);
+      const color = LEVELS[level].color;
+
+      const getNoiseIconSvg = (type: string, strokeColor: string) => {
+        let svgContent = '';
+        switch (type) {
+          case 'construction':
+            svgContent = `<path d="M2 22h20M5 22V11a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v11M12 5V2M10 2h4M9 13h6M9 17h6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
+            break;
+          case 'sirens-traffic':
+            svgContent = `<path d="M12 2L2 22h20L12 2zM12 9v4M12 17h.01" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
+            break;
+          case 'subway-screech':
+            svgContent = `<path d="M11 5L6 9H2v6h4l5 4V5zM15.54 8.46a5 5 0 0 1 0 7.07" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>`;
+            break;
+          case 'nightlife':
+            svgContent = `<path d="M9 18V5l12-2v13" stroke="currentColor" stroke-width="2" fill="none"/><circle cx="6" cy="18" r="3" fill="currentColor"/><circle cx="18" cy="16" r="3" fill="currentColor"/>`;
+            break;
+          case 'horn-exhaust':
+            svgContent = `<path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2" stroke="currentColor" stroke-width="2" fill="none"/><circle cx="7" cy="17" r="2" fill="currentColor"/><circle cx="17" cy="17" r="2" fill="currentColor"/>`;
+            break;
+          case 'quiet-spot':
+            svgContent = `<path d="M12 22V17M12 17c-2.8 0-5-2.2-5-5a5 5 0 0 1 1.7-3.8A5.5 5.5 0 0 1 12 4.5a5.5 5.5 0 0 1 3.3 3.7A5 5 0 0 1 17 12c0 2.8-2.2 5-5 5z" stroke="currentColor" stroke-width="2" fill="none"/>`;
+            break;
+          default:
+            svgContent = `<path d="M12 2v20M2 12h20" stroke="currentColor" stroke-width="2"/>`;
+        }
+        return `
+          <svg viewBox="0 0 24 24" width="14" height="14" style="color: ${strokeColor}; display: block;">
+            ${svgContent}
+          </svg>
+        `;
+      };
 
       const communityIcon = L.divIcon({
         className: 'custom-community-icon',
         html: `
-          <div style="position:relative; width:30px; height:30px; display:flex; align-items:center; justify-content:center;">
-            <div style="position:absolute; width:100%; height:100%; border-radius:50%; background:${color}; opacity:0.35; animation: ping 2s cubic-bezier(0,0,0.2,1) infinite;"></div>
-            <div style="background:#18181b; color:${color}; width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:bold; border:2px solid ${color}; box-shadow:0 3px 8px rgba(0,0,0,0.5);">
-              ${iconEmoji}
-            </div>
+          <div style="
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: #1c1a16;
+            border: 2px solid ${color};
+            box-shadow: 0 3px 8px rgba(0,0,0,.4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          ">
+            ${getNoiseIconSvg(report.noiseType, color)}
           </div>
         `,
-        iconSize: [30, 30],
-        iconAnchor: [15, 15],
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
       });
 
       const marker = L.marker([report.latitude, report.longitude], { icon: communityIcon });
       
       const popupHtml = `
-        <div style="font-family: system-ui, sans-serif; min-width: 210px; color: #18181b;">
-          <div style="display:flex; justify-content:space-between; align-items:center; font-size:10px; font-weight:700; text-transform:uppercase; color:${color}; margin-bottom:2px;">
-            <span>👥 COMMUNITY REPORT</span>
-            <span style="background:#e4e4e7; color:#3f3f46; padding:1px 5px; border-radius:4px;">${report.timeAgo || 'Just now'}</span>
+        <div style="font-family:${FONT}; min-width:200px; color:${COLORS.ink};">
+          <div style="display:flex; justify-content:space-between; font-family:${MONO}; font-size:9px; letter-spacing:.12em; text-transform:uppercase; color:${COLORS.inkSoft}; margin-bottom:5px;">
+            <span>Community report</span>
+            <span>${report.timeAgo || 'just now'}</span>
           </div>
-          <div style="font-size:13px; font-weight:800; margin-bottom:3px; line-height:1.2;">
+          <div style="font-size:13px; font-weight:600; margin-bottom:3px; line-height:1.25;">
             ${report.zoneName}
           </div>
-          <div style="font-size:11px; margin-bottom:6px; color:#3f3f46;">
+          <div style="font-size:11px; margin-bottom:8px; color:${COLORS.inkSoft}; line-height:1.4;">
             ${report.description}
           </div>
-          <div style="display:flex; justify-content:space-between; align-items:center; background:#f4f4f5; padding:5px 8px; border-radius:8px; font-size:11px; font-weight:700;">
-            <span>Noise: <b style="color:${color}; font-size:12px;">${report.decibels} dB SPL</b></span>
-            <span>👍 ${report.upvotes}</span>
-          </div>
-          <div style="font-size:10px; color:#71717a; margin-top:5px; border-top:1px solid #e4e4e7; padding-top:4px; display:flex; align-items:center; justify-content:space-between;">
-            <span>👤 ${report.isUserReported ? '<b style="color:#0284c7;">Reported by You</b>' : (report.reporterName || 'NYC Walker @MidtownScout')}</span>
-            <span style="background:#f4f4f5; color:#52525b; padding:1px 4px; border-radius:3px; font-size:9px;">${report.reporterBadge || 'Live Acoustic Scout'}</span>
+          <div style="display:flex; align-items:center; gap:7px; border-top:1px solid ${COLORS.grid}; padding-top:7px;">
+            <span style="width:11px; height:11px; border-radius:2px; background:${color}; box-shadow:inset 0 0 0 1px rgba(0,0,0,.06);"></span>
+            <span style="font-size:12px; font-weight:600;">${LEVELS[level].label}</span>
+            <span style="font-family:${MONO}; font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:${COLORS.inkSoft}; margin-left:auto;">
+              ${report.isUserReported ? 'by you' : (report.reporterName || 'NYC walker')}
+            </span>
           </div>
         </div>
       `;
@@ -329,6 +389,60 @@ export const SoundMap: React.FC<SoundMapProps> = ({
       communityGroup.addLayer(marker);
     });
   }, [communityReports, showCommunityLayer]);
+
+  // Auto-focus and open popup when a new community report is submitted by the user
+  const prevReportsCountRef = useRef(communityReports.length);
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || communityReports.length <= prevReportsCountRef.current) {
+      prevReportsCountRef.current = communityReports.length;
+      return;
+    }
+
+    prevReportsCountRef.current = communityReports.length;
+
+    const latestReport = communityReports[0]; // because new reports are prepended in App.tsx
+    if (latestReport && latestReport.isUserReported) {
+      // Close any active click actions
+      map.closePopup();
+
+      // Pan & zoom to new report location
+      map.setView([latestReport.latitude, latestReport.longitude], 16);
+
+      // Re-create the community popup HTML
+      const level = levelFromDb(latestReport.decibels);
+      const color = LEVELS[level].color;
+      const popupHtml = `
+        <div style="font-family:${FONT}; min-width:200px; color:${COLORS.ink};">
+          <div style="display:flex; justify-content:space-between; font-family:${MONO}; font-size:9px; letter-spacing:.12em; text-transform:uppercase; color:${COLORS.inkSoft}; margin-bottom:5px;">
+            <span>Community report</span>
+            <span>Just now</span>
+          </div>
+          <div style="font-size:13px; font-weight:600; margin-bottom:3px; line-height:1.25;">
+            ${latestReport.zoneName}
+          </div>
+          <div style="font-size:11px; margin-bottom:8px; color:${COLORS.inkSoft}; line-height:1.4;">
+            ${latestReport.description}
+          </div>
+          <div style="display:flex; align-items:center; gap:7px; border-top:1px solid ${COLORS.grid}; padding-top:7px;">
+            <span style="width:11px; height:11px; border-radius:2px; background:${color}; box-shadow:inset 0 0 0 1px rgba(0,0,0,.06);"></span>
+            <span style="font-size:12px; font-weight:600;">${LEVELS[level].label}</span>
+            <span style="font-family:${MONO}; font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:${COLORS.inkSoft}; margin-left:auto;">
+              by you
+            </span>
+          </div>
+        </div>
+      `;
+
+      // Open popup on the map at the coordinate after a small delay to let the map finish panning
+      setTimeout(() => {
+        L.popup({ autoClose: true, closeOnClick: true })
+          .setLatLng([latestReport.latitude, latestReport.longitude])
+          .setContent(popupHtml)
+          .openOn(map);
+      }, 350);
+    }
+  }, [communityReports]);
 
   const [live311Zones, setLive311Zones] = useState<SoundDensityZone[]>([]);
 
@@ -341,19 +455,39 @@ export const SoundMap: React.FC<SoundMapProps> = ({
     });
   }, []);
 
-  // Update Multi-Dataset NYC Sound Density Zones (including live NYC 311 complaints)
+  // Update Multi-Dataset NYC Sound Density Zones (including live NYC 311 complaints and community reports)
   useEffect(() => {
     const zonesGroup = zonesLayerGroupRef.current;
     if (!zonesGroup) return;
 
     zonesGroup.clearLayers();
 
-    const allZones = [...NYC_SOUND_ZONES, ...live311Zones];
+    const mappedCommunityZones: SoundDensityZone[] = communityReports.map((report) => ({
+      id: report.id,
+      name: report.zoneName,
+      borough: 'Manhattan',
+      type: report.noiseType === 'quiet-spot' ? 'quiet-haven' :
+            report.noiseType === 'construction' ? 'construction' :
+            report.noiseType === 'nightlife' ? 'nightlife' :
+            report.noiseType === 'sirens-traffic' ? 'traffic-siren' : 'traffic-siren',
+      datasetCategory: 'community-report',
+      latitude: report.latitude,
+      longitude: report.longitude,
+      radiusMeters: report.noiseType === 'quiet-spot' ? 120 : 80,
+      baseDecibels: report.decibels,
+      peakDecibels: report.decibels + 5,
+      description: report.description,
+    }));
+
+    const allZones = [...NYC_SOUND_ZONES, ...live311Zones, ...mappedCommunityZones];
+
+    // Every zone in view becomes a field on the design layer — the quiet ones
+    // as much as the loud ones. The map is a reading of the whole soundscape,
+    // not a warning about what happens to be near you.
+    const quietZones: QuietZone[] = [];
 
     allZones.forEach((zone) => {
       let isVisible = false;
-      let color = '#f59e0b';
-      let fillColor = '#f59e0b';
 
       const cat: NoiseDatasetType = zone.datasetCategory || (
         zone.type === 'subway-screech' ? 'mta-transit' :
@@ -362,27 +496,12 @@ export const SoundMap: React.FC<SoundMapProps> = ({
         zone.type === 'nightlife' ? '311-complaint' : 'traffic-corridor'
       );
 
-      if (cat === '311-complaint' && show311Layer) {
-        isVisible = true;
-        color = '#a855f7';
-        fillColor = '#9333ea';
-      } else if (cat === 'mta-transit' && showTransitLayer) {
-        isVisible = true;
-        color = '#ef4444';
-        fillColor = '#dc2626';
-      } else if (cat === 'traffic-corridor' && showTrafficLayer) {
-        isVisible = true;
-        color = '#f97316';
-        fillColor = '#ea580c';
-      } else if (cat === 'construction' && showConstructionLayer) {
-        isVisible = true;
-        color = '#eab308';
-        fillColor = '#ca8a04';
-      } else if (cat === 'quiet-haven' && showQuietLayer) {
-        isVisible = true;
-        color = '#10b981';
-        fillColor = '#059669';
-      }
+      if (cat === '311-complaint' && show311Layer) isVisible = true;
+      else if (cat === 'mta-transit' && showTransitLayer) isVisible = true;
+      else if (cat === 'traffic-corridor' && showTrafficLayer) isVisible = true;
+      else if (cat === 'construction' && showConstructionLayer) isVisible = true;
+      else if (cat === 'quiet-haven' && showQuietLayer) isVisible = true;
+      else if (cat === 'community-report' && showCommunityLayer) isVisible = true;
 
       if (cat !== 'quiet-haven' && zone.baseDecibels > maxDbFilter) {
         isVisible = false;
@@ -390,40 +509,57 @@ export const SoundMap: React.FC<SoundMapProps> = ({
 
       if (!isVisible) return;
 
+      // the zone's colour is its loudness, nothing else
+      const level = levelFromDb(zone.baseDecibels);
+      const color = LEVELS[level].color;
+
+      quietZones.push({
+        id: zone.id,
+        lat: zone.latitude,
+        lon: zone.longitude,
+        radiusMeters: zone.radiusMeters,
+        decibels: zone.baseDecibels,
+        peakDecibels: zone.peakDecibels,
+        kind: cat,
+        label: zone.name,
+      });
+
+      // The zone is drawn by the design layer as pixels. This circle is left
+      // invisible purely as a hit target, so tapping a zone still works.
       const circle = L.circle([zone.latitude, zone.longitude], {
         radius: zone.radiusMeters,
-        color: color,
-        fillColor: fillColor,
-        fillOpacity: zone.type === 'quiet-haven' ? 0.35 : 0.22,
-        weight: zone.type === 'quiet-haven' ? 2 : 1.5,
-        dashArray: zone.type === 'quiet-haven' ? '4, 4' : undefined,
+        stroke: false,
+        fillColor: '#ffffff',
+        fillOpacity: 0.01,
+        interactive: true,
       });
 
       const popupContent = `
-        <div style="font-family: system-ui, sans-serif; min-width: 220px; color: #18181b;">
-          <div style="display:flex; justify-content:space-between; align-items:center; font-size: 10px; font-weight: 700; text-transform: uppercase; color: ${color}; margin-bottom: 2px;">
-            <span>${zone.datasetCategory === '311-complaint' ? '🏛️ OFFICIAL NYC 311' : zone.type.replace('-', ' ').toUpperCase()}</span>
+        <div style="font-family: ${FONT}; min-width: 210px; color: ${COLORS.ink};">
+          <div style="display:flex; justify-content:space-between; align-items:center; font-family:${MONO}; font-size:9px; letter-spacing:.12em; text-transform:uppercase; color:${COLORS.inkSoft}; margin-bottom:5px;">
+            <span>${zone.datasetCategory === '311-complaint' ? 'NYC 311' : zone.datasetCategory === 'community-report' ? 'COMMUNITY REPORT' : zone.type.replace(/-/g, ' ').toUpperCase()}</span>
             <span>${zone.borough}</span>
           </div>
-          <div style="font-size: 13px; font-weight: 800; margin-bottom: 3px; line-height: 1.2;">
+          <div style="font-size:13px; font-weight:600; margin-bottom:3px; line-height:1.25;">
             ${zone.name}
           </div>
-          <div style="font-size: 11px; margin-bottom: 5px; color: #3f3f46;">
+          <div style="font-size:11px; margin-bottom:8px; color:${COLORS.inkSoft}; line-height:1.4;">
             ${zone.description}
           </div>
-          <div style="display: flex; justify-content: space-between; font-size: 11px; font-weight: 600; background: #f4f4f5; padding: 4px 8px; border-radius: 6px;">
-            <span>Avg: <b>${zone.baseDecibels} dB</b></span>
-            <span style="color: ${color};">Peak: <b>${zone.peakDecibels} dB</b></span>
+          <div style="display:flex; align-items:center; gap:7px; border-top:1px solid ${COLORS.grid}; padding-top:7px;">
+            <span style="width:11px; height:11px; border-radius:2px; background:${color}; box-shadow:inset 0 0 0 1px rgba(0,0,0,.06);"></span>
+            <span style="font-size:12px; font-weight:600;">${LEVELS[level].label}</span>
+            <span style="font-family:${MONO}; font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:${COLORS.inkSoft}; margin-left:auto;">${LEVELS[level].note}</span>
           </div>
           ${zone.externalUrl ? `
-            <div style="margin-top:6px; padding-top:4px; border-top:1px solid #e4e4e7;">
-              <a 
-                href="${zone.externalUrl}" 
-                target="_blank" 
-                rel="noopener noreferrer" 
-                style="display:inline-flex; align-items:center; gap:4px; font-size:10px; font-weight:700; color:#9333ea; text-decoration:underline;"
+            <div style="margin-top:7px; padding-top:6px; border-top:1px solid ${COLORS.grid};">
+              <a
+                href="${zone.externalUrl}"
+                target="_blank"
+                rel="noopener noreferrer"
+                style="font-family:${MONO}; font-size:9px; letter-spacing:.08em; text-transform:uppercase; color:${COLORS.ink};"
               >
-                🔗 Open Official NYC OpenData Record (SR #${zone.serviceRequestId || '311'}) ↗
+                Open NYC OpenData record ↗
               </a>
             </div>
           ` : ''}
@@ -437,7 +573,9 @@ export const SoundMap: React.FC<SoundMapProps> = ({
 
       zonesGroup.addLayer(circle);
     });
-  }, [show311Layer, showTransitLayer, showTrafficLayer, showQuietLayer, showConstructionLayer, maxDbFilter, onSelectZone]);
+
+    quietLayerRef.current?.setZones(quietZones);
+  }, [show311Layer, showTransitLayer, showTrafficLayer, showQuietLayer, showConstructionLayer, showCommunityLayer, maxDbFilter, onSelectZone, live311Zones, communityReports]);
 
   // Update Route Polylines & Origin/Destination Markers
   useEffect(() => {
@@ -452,61 +590,48 @@ export const SoundMap: React.FC<SoundMapProps> = ({
       const isSelected = activeRoute?.silenceLevel === 'fastest';
       if (!isSelected) {
         const poly = L.polyline(fastestRoute.coordinates, {
-          color: '#f43f5e',
-          weight: 3.5,
-          opacity: 0.45,
-          dashArray: '6, 6',
+          color: LEVELS[3].color,
+          weight: 2,
+          opacity: 0.9,
+          dashArray: '2, 5',
         });
-        poly.bindTooltip(`Fastest Commute (${fastestRoute.durationMinutes} min • ~${fastestRoute.averageDecibels} dB)`, { sticky: true });
+        poly.bindTooltip('Fastest', { sticky: true });
         routesGroup.addLayer(poly);
       }
     }
 
-    // Render Quietest Route
-    if (quietestRoute && quietestRoute.coordinates.length > 0) {
-      const isSelected = activeRoute?.silenceLevel === 'quietest';
-      if (!isSelected) {
-        const poly = L.polyline(quietestRoute.coordinates, {
-          color: '#10b981',
-          weight: 3.5,
-          opacity: 0.45,
-          dashArray: '6, 6',
-        });
-        poly.bindTooltip(`Quietest Route (${quietestRoute.durationMinutes} min • ~${quietestRoute.averageDecibels} dB)`, { sticky: true });
-        routesGroup.addLayer(poly);
-      }
-    }
+
 
     // Render Avoid-Noise Route (cyan)
     if (avoidNoiseRoute && avoidNoiseRoute.coordinates.length > 0) {
       const isSelected = activeRoute?.silenceLevel === 'avoid-noise';
       if (!isSelected) {
         const poly = L.polyline(avoidNoiseRoute.coordinates, {
-          color: '#06b6d4',
-          weight: 3.5,
-          opacity: 0.45,
-          dashArray: '4, 8',
+          color: LEVELS[2].color,
+          weight: 2,
+          opacity: 0.9,
+          dashArray: '2, 5',
         });
-        poly.bindTooltip(`Noise-Free Route (${avoidNoiseRoute.durationMinutes} min • ~${avoidNoiseRoute.averageDecibels} dB)`, { sticky: true });
+        poly.bindTooltip('Noise-free', { sticky: true });
         routesGroup.addLayer(poly);
       }
     }
 
-    // Render Active Route prominently
+    // Your path — you to destination. It sits above the loudness pixels and
+    // multiplies with them, so the line darkens wherever it crosses sound.
+    // Quiet stretches stay the flat route colour; a very-loud crossing turns
+    // it almost black. The route reads its own exposure. No halo: white is the
+    // identity for multiply, so a halo would simply vanish.
     if (activeRoute && activeRoute.coordinates.length > 0) {
-      const glowLine = L.polyline(activeRoute.coordinates, {
-        color: activeRoute.color,
-        weight: 9,
-        opacity: 0.35,
-      });
-      routesGroup.addLayer(glowLine);
-
       const mainLine = L.polyline(activeRoute.coordinates, {
-        color: activeRoute.color,
-        weight: 5,
-        opacity: 0.95,
+        color: COLORS.route,
+        weight: 3.5,
+        opacity: 1,
+        lineJoin: 'round',
+        lineCap: 'round',
+        className: 'quiet-route',
       });
-      mainLine.bindTooltip(`<b>${activeRoute.title}</b><br/>${activeRoute.durationMinutes} min • ~${activeRoute.averageDecibels} dB SPL`, { sticky: true });
+      mainLine.bindTooltip(activeRoute.title, { sticky: true });
       routesGroup.addLayer(mainLine);
     }
 
@@ -514,9 +639,9 @@ export const SoundMap: React.FC<SoundMapProps> = ({
     if (origin) {
       const originIcon = L.divIcon({
         className: 'custom-origin-icon',
-        html: `<div style="background:#10b981; color:white; width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:900; font-size:12px; border:2.5px solid white; box-shadow:0 3px 8px rgba(0,0,0,0.5);">A</div>`,
-        iconSize: [26, 26],
-        iconAnchor: [13, 13],
+        html: `<div style="width:12px; height:12px; box-shadow:inset 0 0 0 2px ${COLORS.ink};"></div>`,
+        iconSize: [12, 12],
+        iconAnchor: [6, 6],
       });
       const originMarker = L.marker([origin.latitude, origin.longitude], { icon: originIcon });
       originMarker.bindTooltip(`<b>Start:</b> ${origin.name}`);
@@ -527,9 +652,9 @@ export const SoundMap: React.FC<SoundMapProps> = ({
     if (destination) {
       const destIcon = L.divIcon({
         className: 'custom-dest-icon',
-        html: `<div style="background:#f43f5e; color:white; width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:900; font-size:12px; border:2.5px solid white; box-shadow:0 3px 8px rgba(0,0,0,0.5);">B</div>`,
-        iconSize: [26, 26],
-        iconAnchor: [13, 13],
+        html: `<div style="width:12px; height:12px; background:${COLORS.ink};"></div>`,
+        iconSize: [12, 12],
+        iconAnchor: [6, 6],
       });
       const destMarker = L.marker([destination.latitude, destination.longitude], { icon: destIcon });
       destMarker.bindTooltip(`<b>End:</b> ${destination.name}`);
@@ -548,7 +673,7 @@ export const SoundMap: React.FC<SoundMapProps> = ({
         // ignore bounds errors
       }
     }
-  }, [activeRoute, fastestRoute, quietestRoute, avoidNoiseRoute, origin, destination]);
+  }, [activeRoute, fastestRoute, avoidNoiseRoute, origin, destination]);
 
   // Update Simulation Walker Avatar
   useEffect(() => {
@@ -568,25 +693,15 @@ export const SoundMap: React.FC<SoundMapProps> = ({
     }
 
     const { currentLat, currentLon, currentDecibels } = simulationState;
-    const catStyle = getCategoryColor(
-      currentDecibels < 45 ? 'Quiet / Whisper' :
-      currentDecibels < 65 ? 'Moderate Ambient' :
-      currentDecibels < 78 ? 'Busy City / Traffic' :
-      currentDecibels < 88 ? 'Heavy Transit' : 'Extreme / Sirens'
-    );
 
+    const walkLevel = levelFromDb(currentDecibels);
     const walkerIcon = L.divIcon({
       className: 'sim-walker-icon',
       html: `
-        <div style="position:relative; width:34px; height:34px; display:flex; align-items:center; justify-content:center;">
-          <div style="position:absolute; width:100%; height:100%; border-radius:50%; background:${catStyle.hex}; opacity:0.4; animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>
-          <div style="background:#09090b; color:${catStyle.hex}; width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:13px; border:2.5px solid ${catStyle.hex}; box-shadow:0 3px 8px rgba(0,0,0,0.6);">
-            🚶
-          </div>
-        </div>
+        <div style="width:12px; height:12px; box-shadow:inset 0 0 0 2px ${COLORS.ink}, 0 0 0 3px ${LEVELS[walkLevel].color};"></div>
       `,
-      iconSize: [34, 34],
-      iconAnchor: [17, 17],
+      iconSize: [12, 12],
+      iconAnchor: [6, 6],
     });
 
     const pulseRadius = Math.max(15, (currentDecibels - 30) * 1.8);
@@ -595,10 +710,10 @@ export const SoundMap: React.FC<SoundMapProps> = ({
       simMarkerRef.current = L.marker([currentLat, currentLon], { icon: walkerIcon }).addTo(map);
       simPulseRef.current = L.circle([currentLat, currentLon], {
         radius: pulseRadius,
-        color: catStyle.hex,
-        fillColor: catStyle.hex,
-        fillOpacity: 0.25,
-        weight: 1.5,
+        color: COLORS.gridDeep,
+        fillOpacity: 0,
+        weight: 1,
+        dashArray: '2, 4',
       }).addTo(map);
     } else {
       simMarkerRef.current.setLatLng([currentLat, currentLon]);
@@ -606,10 +721,7 @@ export const SoundMap: React.FC<SoundMapProps> = ({
       if (simPulseRef.current) {
         simPulseRef.current.setLatLng([currentLat, currentLon]);
         simPulseRef.current.setRadius(pulseRadius);
-        simPulseRef.current.setStyle({
-          color: catStyle.hex,
-          fillColor: catStyle.hex,
-        });
+        simPulseRef.current.setStyle({ color: COLORS.gridDeep });
       }
     }
   }, [simulationState]);
@@ -629,18 +741,15 @@ export const SoundMap: React.FC<SoundMapProps> = ({
   };
 
   return (
-    <div className={`relative w-full overflow-hidden ${isFullScreenMode ? 'h-full' : 'h-[380px] sm:h-[460px] rounded-3xl border border-stone-800'}`}>
-      <div ref={mapContainerRef} className="w-full h-full z-10" />
+    <div className={`relative w-full overflow-hidden bg-white ${isFullScreenMode ? 'h-full' : 'h-[380px] sm:h-[460px] rounded-3xl border border-stone-800'}`}>
+      <div ref={mapContainerRef} className="w-full h-full z-10 bg-white" />
 
       {/* Live GPS Indicator Chip */}
       {userLat && userLon && (
-        <div className="absolute top-3 left-3 z-[400] bg-stone-950/90 border border-sky-500/30 rounded-2xl px-3 py-1.5 shadow-xl backdrop-blur-md flex items-center gap-2 pointer-events-auto">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-sky-500"></span>
-          </span>
-          <span className="text-[11px] font-mono text-sky-300 font-bold">
-            Live GPS Active
+        <div className="absolute top-3 left-3 z-[400] bg-stone-950 border border-stone-800 rounded-2xl px-3 py-1.5 flex items-center gap-2 pointer-events-auto">
+          <span className="w-1.5 h-1.5 bg-stone-100" />
+          <span className="text-[10px] font-mono text-stone-100 uppercase tracking-[0.14em]">
+            Live
           </span>
         </div>
       )}
@@ -698,7 +807,7 @@ export const SoundMap: React.FC<SoundMapProps> = ({
       {showLayersSheet && (
         <div className="absolute top-28 right-3 z-[400] bg-stone-950/95 border border-stone-800 rounded-3xl p-3 shadow-2xl backdrop-blur-xl text-xs space-y-2 pointer-events-auto min-w-[210px]">
           <div className="font-bold text-stone-300 text-[11px] uppercase tracking-wider mb-1 flex items-center justify-between">
-            <span>Noise Datasets & Reports</span>
+            <span>Sound layers</span>
             <button
               onClick={() => setShowLayersSheet(false)}
               className="text-stone-500 hover:text-stone-300"

@@ -91,9 +91,9 @@ export interface MicState {
   calibrationOffset: number;
 }
 
-// --- Navigation: 3 Options (Fastest / Quietest / Avoid-Noise) ---
+// --- Navigation: 2 Options (Fastest / Avoid-Noise) ---
 
-export type SilenceLevel = 'fastest' | 'quietest' | 'avoid-noise';
+export type SilenceLevel = 'fastest' | 'avoid-noise';
 
 export interface SilenceLevelConfig {
   id: SilenceLevel;
@@ -171,7 +171,7 @@ export interface NavRoute {
 }
 
 export interface RouteComparisonDelta {
-  decibelReduction: number; // quietest vs fastest
+  decibelReduction: number; // avoid-noise vs fastest
   timeDifferenceMinutes: number;
   distanceDifferenceMeters: number;
   silenceScoreDifference: number;

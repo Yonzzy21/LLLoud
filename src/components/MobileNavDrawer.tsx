@@ -29,7 +29,7 @@ interface MobileNavDrawerProps {
   origin: Waypoint;
   destination: Waypoint;
   fastestRoute: NavRoute;
-  quietestRoute: NavRoute;
+  avoidNoiseRoute: NavRoute;
   delta: RouteComparisonDelta;
   selectedSilenceLevel: SilenceLevel;
   onSelectSilenceLevel: (level: SilenceLevel) => void;
@@ -44,7 +44,7 @@ export const MobileNavDrawer: React.FC<MobileNavDrawerProps> = ({
   origin,
   destination,
   fastestRoute,
-  quietestRoute,
+  avoidNoiseRoute,
   delta,
   selectedSilenceLevel,
   onSelectSilenceLevel,
@@ -55,7 +55,7 @@ export const MobileNavDrawer: React.FC<MobileNavDrawerProps> = ({
   onStepClick,
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
-  const activeRoute = selectedSilenceLevel === 'quietest' ? quietestRoute : fastestRoute;
+  const activeRoute = selectedSilenceLevel === 'avoid-noise' ? avoidNoiseRoute : fastestRoute;
 
   const getStepIcon = (instruction: string) => {
     const lower = instruction.toLowerCase();
@@ -116,37 +116,37 @@ export const MobileNavDrawer: React.FC<MobileNavDrawerProps> = ({
               </div>
             </button>
 
-            {/* 2. Quietest Route Option */}
+            {/* 2. No Noise Route Option */}
             <button
-              id="select-quietest-route-btn"
-              onClick={() => onSelectSilenceLevel('quietest')}
+              id="select-avoid-noise-route-btn"
+              onClick={() => onSelectSilenceLevel('avoid-noise')}
               className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden flex flex-col justify-between ${
-                selectedSilenceLevel === 'quietest'
-                  ? 'bg-emerald-950/30 border-emerald-500 shadow-md ring-1 ring-emerald-500/50 text-white'
+                selectedSilenceLevel === 'avoid-noise'
+                  ? 'bg-cyan-950/30 border-cyan-500 shadow-md ring-1 ring-cyan-500/50 text-white'
                   : 'bg-stone-900/80 border-stone-800 text-stone-400 hover:border-stone-700 hover:text-stone-200'
               }`}
             >
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-1.5 font-bold text-xs text-emerald-300">
-                    <Trees className="w-4 h-4 text-emerald-400" />
-                    <span>Quietest</span>
+                  <div className="flex items-center gap-1.5 font-bold text-xs text-cyan-300">
+                    <ShieldCheck className="w-4 h-4 text-cyan-400" />
+                    <span>No Noise</span>
                   </div>
-                  <span className="text-[10px] font-mono text-emerald-400 font-bold">
-                    ~{quietestRoute.averageDecibels} dB
+                  <span className="text-[10px] font-mono text-cyan-400 font-bold">
+                    ~{avoidNoiseRoute.averageDecibels} dB
                   </span>
                 </div>
                 <div className="text-lg font-black font-mono text-white">
-                  {quietestRoute.durationMinutes} <span className="text-xs font-normal text-stone-400">min</span>
+                  {avoidNoiseRoute.durationMinutes} <span className="text-xs font-normal text-stone-400">min</span>
                 </div>
                 <div className="text-[10px] text-stone-500 truncate">
-                  {(quietestRoute.distanceMeters / 1000).toFixed(2)} km • Parks & Side Streets
+                  {(avoidNoiseRoute.distanceMeters / 1000).toFixed(2)} km • Avoid Noise Corridor
                 </div>
               </div>
 
               {/* dB Reduction Advantage Pill */}
-              <div className="mt-2 text-[10px] font-mono text-emerald-300 font-bold bg-emerald-500/20 px-1.5 py-0.5 rounded border border-emerald-500/30 text-center">
-                🌿 -{delta.decibelReduction} dB Quieter!
+              <div className="mt-2 text-[10px] font-mono text-cyan-300 font-bold bg-cyan-500/20 px-1.5 py-0.5 rounded border border-cyan-500/30 text-center">
+                🤫 -{delta.avoidNoiseDecibelReduction} dB less noise!
               </div>
             </button>
           </div>
@@ -156,14 +156,14 @@ export const MobileNavDrawer: React.FC<MobileNavDrawerProps> = ({
             id="start-mobile-nav-btn"
             onClick={onStartNavigation}
             className={`w-full py-3.5 px-4 rounded-2xl font-black text-sm tracking-wide flex items-center justify-center gap-2 shadow-lg transition-all active:scale-[0.98] ${
-              selectedSilenceLevel === 'quietest'
-                ? 'bg-emerald-500 hover:bg-emerald-400 text-stone-950 shadow-emerald-900/30'
+              selectedSilenceLevel === 'avoid-noise'
+                ? 'bg-cyan-500 hover:bg-cyan-400 text-stone-950 shadow-cyan-900/30'
                 : 'bg-rose-500 hover:bg-rose-400 text-white shadow-rose-900/30'
             }`}
           >
             <Navigation className="w-4 h-4 fill-current" />
             <span>
-              Start Walking ({selectedSilenceLevel === 'quietest' ? 'Quiet Route' : 'Fastest Commute'})
+              Start Walking ({selectedSilenceLevel === 'avoid-noise' ? 'No Noise Route' : 'Fastest Commute'})
             </span>
           </button>
         </div>

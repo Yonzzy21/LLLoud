@@ -195,38 +195,38 @@ export function calculateTwoCommuteRoutes(
   communityReports: CommunityNoiseReport[] = []
 ): {
   fastestRoute: NavRoute;
-  quietestRoute: NavRoute;
+  avoidNoiseRoute: NavRoute;
   delta: RouteComparisonDelta;
 } {
   const fastestRoute = calculateWalkableRoute(origin, destination, 'fastest', communityReports);
-  const quietestRoute = calculateWalkableRoute(origin, destination, 'quietest', communityReports);
+  const avoidNoiseRoute = calculateWalkableRoute(origin, destination, 'avoid-noise', communityReports);
 
-  // Ensure logical consistency: Fastest must always be strictly <= Quietest in duration & distance
-  if (quietestRoute.durationMinutes <= fastestRoute.durationMinutes) {
-    quietestRoute.durationMinutes = fastestRoute.durationMinutes + Math.max(2, Math.round(fastestRoute.durationMinutes * 0.15));
+  // Ensure logical consistency: Fastest must always be strictly <= Avoid-Noise in duration & distance
+  if (avoidNoiseRoute.durationMinutes <= fastestRoute.durationMinutes) {
+    avoidNoiseRoute.durationMinutes = fastestRoute.durationMinutes + Math.max(2, Math.round(fastestRoute.durationMinutes * 0.15));
   }
-  if (quietestRoute.distanceMeters <= fastestRoute.distanceMeters) {
-    quietestRoute.distanceMeters = Math.round(fastestRoute.distanceMeters * 1.18);
+  if (avoidNoiseRoute.distanceMeters <= fastestRoute.distanceMeters) {
+    avoidNoiseRoute.distanceMeters = Math.round(fastestRoute.distanceMeters * 1.18);
   }
 
   const decibelReduction = Math.max(
     3.5,
-    Math.round((fastestRoute.averageDecibels - quietestRoute.averageDecibels) * 10) / 10
+    Math.round((fastestRoute.averageDecibels - avoidNoiseRoute.averageDecibels) * 10) / 10
   );
-  const timeDifferenceMinutes = Math.max(1, quietestRoute.durationMinutes - fastestRoute.durationMinutes);
-  const distanceDifferenceMeters = Math.max(80, quietestRoute.distanceMeters - fastestRoute.distanceMeters);
-  const silenceScoreDifference = Math.max(10, quietestRoute.silenceScore - fastestRoute.silenceScore);
+  const timeDifferenceMinutes = Math.max(1, avoidNoiseRoute.durationMinutes - fastestRoute.durationMinutes);
+  const distanceDifferenceMeters = Math.max(80, avoidNoiseRoute.distanceMeters - fastestRoute.distanceMeters);
+  const silenceScoreDifference = Math.max(10, avoidNoiseRoute.silenceScore - fastestRoute.silenceScore);
 
   return {
     fastestRoute,
-    quietestRoute,
+    avoidNoiseRoute,
     delta: {
       decibelReduction,
       timeDifferenceMinutes,
       distanceDifferenceMeters,
       silenceScoreDifference,
-      avoidNoiseDecibelReduction: Math.max(8, decibelReduction * 1.5),
-      avoidNoiseTimeDifference: Math.max(2, timeDifferenceMinutes + 2),
+      avoidNoiseDecibelReduction: decibelReduction,
+      avoidNoiseTimeDifference: timeDifferenceMinutes,
     },
   };
 }
@@ -265,7 +265,7 @@ export function calculateWalkableRoute(
       }
     }
 
-    if (level === 'quietest') {
+    if (level === 'avoid-noise') {
       if (!acoustic.isSanctuary && adjustedDb < 70) {
         adjustedDb = Math.max(39, adjustedDb - 8);
       } else if (acoustic.isSanctuary) {

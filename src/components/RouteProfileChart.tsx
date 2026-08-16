@@ -201,15 +201,15 @@ export const RouteProfileChart: React.FC<RouteProfileChartProps> = ({
                 y1={paddingTop}
                 x2={getX(hoverPoint.distanceFromStartMeters)}
                 y2={height - paddingBottom}
-                stroke="#ffffff"
-                strokeWidth="1.5"
+                stroke="#1C1A16"
+                strokeWidth="1"
               />
               <circle
                 cx={getX(hoverPoint.distanceFromStartMeters)}
                 cy={getY(hoverPoint.decibels)}
                 r="4.5"
-                fill="#ffffff"
-                stroke={route.color}
+                fill="#FFFCF3"
+                stroke="#1C1A16"
                 strokeWidth="2"
               />
             </>

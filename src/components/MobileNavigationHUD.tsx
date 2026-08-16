@@ -14,7 +14,8 @@ import {
   Trees,
   Zap,
   VolumeX,
-  Radio
+  Radio,
+  ShieldCheck
 } from 'lucide-react';
 import { NavRoute, NavigationSimulationState } from '../types';
 import { getCategoryColor } from '../utils/audioEngine';
@@ -43,7 +44,9 @@ export const MobileNavigationHUD: React.FC<MobileNavigationHUDProps> = ({
   onEndNavigation,
 }) => {
   const currentStep = route.steps[simulationState.currentStepIndex] || route.steps[0];
+  const isAvoidNoise = route.silenceLevel === 'avoid-noise';
   const isQuietest = route.silenceLevel === 'quietest';
+  const isQuiet = isQuietest || isAvoidNoise;
 
   // Display either the live mic SPL reading or the simulated point acoustic level
   const displayedDecibels = isListening && liveDecibels > 0 ? liveDecibels : simulationState.currentDecibels;
@@ -73,13 +76,15 @@ export const MobileNavigationHUD: React.FC<MobileNavigationHUDProps> = ({
       {/* 1. Top Floating Navigation Direction Banner */}
       <div className="max-w-lg mx-auto w-full pointer-events-auto">
         <div className={`p-4 rounded-3xl shadow-2xl border backdrop-blur-xl flex items-start gap-3.5 transition-all ${
-          isQuietest
+          isAvoidNoise
+            ? 'bg-cyan-950/90 border-cyan-500/60 text-cyan-100'
+            : isQuietest
             ? 'bg-emerald-950/90 border-emerald-500/60 text-emerald-100'
             : 'bg-rose-950/90 border-rose-500/60 text-rose-100'
         }`}>
           {/* Turn Arrow Icon Box */}
           <div className={`p-3 rounded-2xl shrink-0 font-black shadow-lg ${
-            isQuietest ? 'bg-emerald-500 text-stone-950' : 'bg-rose-500 text-white'
+            isAvoidNoise ? 'bg-cyan-500 text-stone-950' : isQuietest ? 'bg-emerald-500 text-stone-950' : 'bg-rose-500 text-white'
           }`}>
             <StepIcon className="w-6 h-6 stroke-[2.5]" />
           </div>
@@ -87,7 +92,7 @@ export const MobileNavigationHUD: React.FC<MobileNavigationHUDProps> = ({
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between gap-2">
               <span className="text-[11px] font-extrabold uppercase tracking-wider opacity-80 flex items-center gap-1">
-                {isQuietest ? <Trees className="w-3.5 h-3.5" /> : <Zap className="w-3.5 h-3.5" />}
+                {isAvoidNoise ? <ShieldCheck className="w-3.5 h-3.5" /> : isQuietest ? <Trees className="w-3.5 h-3.5" /> : <Zap className="w-3.5 h-3.5" />}
                 <span>{route.title}</span>
               </span>
               <span className="text-xs font-mono font-bold px-2 py-0.5 rounded-full bg-black/40 border border-white/10">
@@ -170,7 +175,7 @@ export const MobileNavigationHUD: React.FC<MobileNavigationHUDProps> = ({
           <div className="w-full bg-stone-900 h-2 rounded-full overflow-hidden mb-3 border border-stone-800">
             <div
               className={`h-full transition-all duration-200 ${
-                isQuietest ? 'bg-emerald-500' : 'bg-rose-500'
+                isAvoidNoise ? 'bg-cyan-500' : isQuietest ? 'bg-emerald-500' : 'bg-rose-500'
               }`}
               style={{ width: `${simulationState.progressPercent}%` }}
             />

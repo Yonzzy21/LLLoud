@@ -175,11 +175,10 @@ export default function App() {
   // --- Navigation State (Point A & Point B fully editable with Real Geocoding) ---
   const [origin, setOrigin] = useState<Waypoint>(NYC_PRESET_ROUTES[0].origin);
   const [destination, setDestination] = useState<Waypoint>(NYC_PRESET_ROUTES[0].destination);
-  const [selectedSilenceLevel, setSelectedSilenceLevel] = useState<SilenceLevel>('quietest');
+  const [selectedSilenceLevel, setSelectedSilenceLevel] = useState<SilenceLevel>('avoid-noise');
 
   // Computed Real Walkable Commute Routes
   const [fastestRoute, setFastestRoute] = useState<NavRoute | null>(null);
-  const [quietestRoute, setQuietestRoute] = useState<NavRoute | null>(null);
   const [avoidNoiseRoute, setAvoidNoiseRoute] = useState<NavRoute | null>(null);
   const [routeDelta, setRouteDelta] = useState<RouteComparisonDelta>({
     decibelReduction: 12.0,
@@ -208,11 +207,9 @@ export default function App() {
       if (!isCancelled) {
         console.log('[LLLoud] ✅ Routes calculated:', {
           fastest: `${res.fastestRoute.distanceMeters}m, ${res.fastestRoute.coordinates.length} pts`,
-          quietest: `${res.quietestRoute.distanceMeters}m, ${res.quietestRoute.coordinates.length} pts`,
           avoidNoise: `${res.avoidNoiseRoute.distanceMeters}m, ${res.avoidNoiseRoute.coordinates.length} pts`,
         });
         setFastestRoute(res.fastestRoute);
-        setQuietestRoute(res.quietestRoute);
         setAvoidNoiseRoute(res.avoidNoiseRoute);
         setRouteDelta(res.delta);
         setIsCalculatingRoutes(false);
@@ -228,9 +225,8 @@ export default function App() {
   }, [routeKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const activeRoute =
-    selectedSilenceLevel === 'avoid-noise' ? (avoidNoiseRoute || quietestRoute || fastestRoute) :
-    selectedSilenceLevel === 'quietest'    ? (quietestRoute || fastestRoute) :
-                                             (fastestRoute || quietestRoute);
+    selectedSilenceLevel === 'avoid-noise' ? (avoidNoiseRoute || fastestRoute) :
+                                             (fastestRoute || avoidNoiseRoute);
 
   // Mobile Walking Navigation HUD State
   const [simulationState, setSimulationState] = useState<NavigationSimulationState>({
@@ -627,17 +623,17 @@ export default function App() {
               </div>
             </div>
 
-            {/* 3 Route Comparison Cards */}
-            {fastestRoute && quietestRoute && (
+            {/* Route Comparison Cards */}
+            {fastestRoute && avoidNoiseRoute && (
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-extrabold uppercase tracking-wider text-stone-400">Choose Route</span>
                   <span className="text-[11px] font-bold text-cyan-400 bg-cyan-950/60 border border-cyan-800/60 px-2 py-0.5 rounded-full">
-                    🤫 3 Options
+                    🤫 2 Options
                   </span>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 gap-2">
                   {/* 1. Fastest Commute */}
                   <div
                     onClick={() => setSelectedSilenceLevel('fastest')}
@@ -658,27 +654,7 @@ export default function App() {
                     <div className="text-[9px] font-mono font-bold text-rose-300 mt-0.5">{fastestRoute.averageDecibels} dB</div>
                   </div>
 
-                  {/* 2. Quietest Route */}
-                  <div
-                    onClick={() => setSelectedSilenceLevel('quietest')}
-                    className={`p-2.5 rounded-2xl border transition-all cursor-pointer ${
-                      selectedSilenceLevel === 'quietest'
-                        ? 'bg-emerald-950/60 border-emerald-500 shadow-lg ring-1 ring-emerald-500'
-                        : 'bg-stone-900/60 border-stone-800 hover:border-stone-700'
-                    }`}
-                  >
-                    <div className="font-extrabold text-[10px] text-emerald-400 flex items-center gap-1 mb-1">
-                      <Trees className="w-3 h-3 fill-current" />
-                      <span>Quietest</span>
-                    </div>
-                    <div className="text-lg font-black text-emerald-300 font-mono leading-none">
-                      {quietestRoute.durationMinutes}<span className="text-[9px] font-normal text-stone-400 ml-0.5">min</span>
-                    </div>
-                    <div className="text-[9px] text-stone-500 mt-1">{Math.round(quietestRoute.distanceMeters / 100) / 10} km</div>
-                    <div className="text-[9px] font-mono font-bold text-emerald-400 mt-0.5">{quietestRoute.averageDecibels} dB</div>
-                  </div>
-
-                  {/* 3. Noise-Free Route */}
+                  {/* 2. No Noise Route */}
                   <div
                     onClick={() => setSelectedSilenceLevel('avoid-noise')}
                     className={`p-2.5 rounded-2xl border transition-all cursor-pointer ${
@@ -700,13 +676,10 @@ export default function App() {
                 </div>
 
                 {/* dB savings badge */}
-                <div className="flex gap-2 text-[10px]">
-                  <span className="flex-1 text-center bg-emerald-950/40 border border-emerald-800/40 text-emerald-400 rounded-lg py-1 font-bold">
-                    🌿 Quietest saves {routeDelta.decibelReduction} dB
-                  </span>
-                  <span className="flex-1 text-center bg-cyan-950/40 border border-cyan-800/40 text-cyan-400 rounded-lg py-1 font-bold">
-                    🤫 No-noise saves {routeDelta.avoidNoiseDecibelReduction} dB
-                  </span>
+                <div className="text-[10px] pt-1">
+                  <div className="w-full text-center bg-cyan-950/40 border border-cyan-800/40 text-cyan-400 rounded-lg py-2 font-bold">
+                    🤫 No-Noise Route saves {routeDelta.avoidNoiseDecibelReduction} dB
+                  </div>
                 </div>
 
                 {/* Big Start Walking Button */}
@@ -715,8 +688,6 @@ export default function App() {
                   className={`w-full py-3 rounded-2xl font-black text-sm tracking-wide shadow-xl flex items-center justify-center gap-2 transition-transform active:scale-98 cursor-pointer ${
                     selectedSilenceLevel === 'avoid-noise'
                       ? 'bg-cyan-500 hover:bg-cyan-400 text-stone-950'
-                      : selectedSilenceLevel === 'quietest'
-                      ? 'bg-emerald-500 hover:bg-emerald-400 text-stone-950'
                       : 'bg-rose-500 hover:bg-rose-400 text-white'
                   }`}
                 >
@@ -776,7 +747,6 @@ export default function App() {
                 logs={logs}
                 activeRoute={activeRoute}
                 fastestRoute={fastestRoute}
-                quietestRoute={quietestRoute}
                 avoidNoiseRoute={avoidNoiseRoute}
                 origin={origin}
                 destination={destination}
@@ -856,14 +826,12 @@ export default function App() {
                 </div>
               )}
 
-              {/* Mobile Drawer (Only on small screens) */}
-              {!simulationState.isActive && fastestRoute && quietestRoute && (
+              {!simulationState.isActive && fastestRoute && avoidNoiseRoute && (
                 <div className="md:hidden">
                   <MobileNavDrawer
                     origin={origin}
                     destination={destination}
                     fastestRoute={fastestRoute}
-                    quietestRoute={quietestRoute}
                     avoidNoiseRoute={avoidNoiseRoute}
                     delta={routeDelta}
                     selectedSilenceLevel={selectedSilenceLevel}
@@ -902,7 +870,6 @@ export default function App() {
                 isListening={isListening}
                 logs={logs}
                 fastestRoute={fastestRoute}
-                quietestRoute={quietestRoute}
                 avoidNoiseRoute={avoidNoiseRoute}
                 activeRoute={activeRoute}
                 origin={origin}

@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#FFFCF3" />
+<title>QUIET — design preview</title>
+
+<!--
+  GENERATED FILE — do not edit by hand.
+  Rebuild with:  node scripts/build-preview.mjs
+
+  Preview harness for the design layer, on the repo's real zone data
+  (33 zones parsed from src/data/nycSoundData.ts) and the real
+  Leaflet map. No React, no routing, no mic — for those, npm run dev.
+-->
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hedvig+Letters+Serif:opsz@12..24&display=swap" />
+<style>
+  :root {
+    --paper: #FFFCF3;
+    --map: #FFFFFF;
+    --grid: #E5D2B9;
+    --grid-deep: #D8BF9C;
+    --ink: #1C1A16;
+    --ink-soft: #AEA8A0;
+    --route: #AEA8A0;
+    /* the colour the palest part of the basemap becomes — from tokens.ts */
+    --map-tint: #E5D2B9;
+    --r: 3px;
+    --safe-t: env(safe-area-inset-top, 0px);
+    --safe-b: env(safe-area-inset-bottom, 0px);
+    /* TWO VOICES. Helvetica is the city — street names, labels, chrome.
+       Hedvig Letters Serif is yours — where you are, where you are going,
+       and how loud it is around you. */
+    --font: Helvetica, 'Helvetica Neue', Arial, sans-serif;
+    --serif: 'Hedvig Letters Serif', ui-serif, Georgia, serif;
+    --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin:0; height:100%; background:var(--paper); font-family:var(--font); color:var(--ink); overscroll-behavior:none; -webkit-font-smoothing:antialiased; }
+
+  #app { position:relative; width:100%; height:100%; max-width:430px; margin:0 auto; background:var(--paper); overflow:hidden; }
+
+  /* the status bar is part of the phone, not the app */
+  .statusbar {
+    position:absolute; top:0; left:0; right:0; height:calc(var(--safe-t) + 44px);
+    display:flex; align-items:flex-end; justify-content:space-between;
+    padding:0 26px 8px; z-index:800; pointer-events:none;
+    font-family:var(--font); font-size:14px; font-weight:600; letter-spacing:.01em; color:var(--ink);
+  }
+  .statusbar .dots { display:flex; gap:3px; align-items:center; }
+  .statusbar .dots i { width:4px; height:4px; background:var(--ink); display:block; }
+  .home-indicator {
+    position:absolute; bottom:7px; left:50%; transform:translateX(-50%);
+    width:134px; height:5px; border-radius:3px; background:var(--ink); opacity:.85;
+    z-index:800; pointer-events:none;
+  }
+
+  /* On a phone the app is the whole screen. On a desktop, where this gets
+     shared and reviewed, it is presented inside a device so the proportions
+     are read correctly — this is a mobile-only design and a full-width browser
+     window would misrepresent it. The frame is hardware, so it keeps hardware
+     radii; the 3px rule is for interface chrome inside the screen. */
+  .device { display:contents; }
+
+  @media (min-width:480px) and (min-height:720px) {
+    body { display:grid; place-items:center; background:#EFE9DE; padding:28px; }
+    .device {
+      display:block; position:relative;
+      padding:11px;
+      background:linear-gradient(160deg,#2A2620,#141210 60%,#2A2620);
+      border-radius:56px;
+      box-shadow:
+        0 0 0 1.5px #4A443C,
+        0 50px 100px -34px rgba(40,30,15,.55),
+        0 8px 24px -12px rgba(40,30,15,.35);
+    }
+    #app {
+      width:402px; height:min(874px, calc(100vh - 78px));
+      border-radius:45px; overflow:hidden;
+    }
+    /* the island */
+    .device::after {
+      content:""; position:absolute; top:23px; left:50%; transform:translateX(-50%);
+      width:112px; height:31px; border-radius:19px; background:#0B0A09; z-index:900;
+    }
+  }
+  @media (max-width:479px), (max-height:719px) {
+    .statusbar, .home-indicator { display:none; }   /* the real phone has its own */
+  }
+
+  .capsule { position:absolute; top:calc(var(--safe-t) + 44px); left:8px; right:8px; bottom:calc(var(--safe-b) + 22px); border-radius:var(--r); background:var(--map); overflow:hidden; }
+  .capsule::after { content:""; position:absolute; inset:0; border-radius:inherit; box-shadow:inset 0 0 0 1px var(--grid); pointer-events:none; z-index:500; }
+  #map { width:100%; height:100%; background:var(--map); }
+
+  .leaflet-container { background:var(--map); font-family:var(--font); }
+  /* The city is greyscaled, then tinted by a multiply layer. Multiply maps
+     white to the tint exactly, so --map-tint IS the colour the palest part of
+     the map becomes — no guessing at sepia and saturate numbers. Change that
+     one variable and the whole basemap changes with it. */
+  .quiet-tiles { filter: grayscale(1) contrast(0.88) brightness(1.04); }
+  .map-tint {
+    position:absolute; inset:0; z-index:250; pointer-events:none;
+    background: var(--map-tint); mix-blend-mode: multiply;
+  }
+  .quiet-canvas { image-rendering: pixelated; }
+  .leaflet-div-icon, .leaflet-marker-icon { background:none; border:none; }
+  /* the browser's own blue focus ring on draggable markers — gone for pointer
+     use, kept for keyboard so the app stays operable without a mouse */
+  .leaflet-marker-icon:focus, .leaflet-interactive:focus { outline:none; }
+  .leaflet-marker-icon:focus-visible, .leaflet-interactive:focus-visible { outline:1px solid var(--ink); outline-offset:3px; }
+  /* you, your destination and the path all multiply with the sound beneath,
+     so the three read as one object laid over the field. Labels stay out of
+     it — they are read, not felt. */
+  .leaflet-overlay-pane { mix-blend-mode: multiply; }
+  .leaflet-marker-pane  { mix-blend-mode: multiply; }
+  /* attribution is a licence condition — it must never end up under the sheet */
+  .leaflet-control-attribution {
+    background:rgba(255,252,243,.85)!important; color:var(--ink-soft)!important;
+    font-size:9px!important; margin-bottom:calc(var(--sheet-h, 220px) + 6px)!important;
+  }
+  .leaflet-tooltip { background:var(--paper); color:var(--ink); border:1px solid var(--grid); border-radius:var(--r); box-shadow:none; font-family:var(--mono); font-size:9px; letter-spacing:.12em; text-transform:uppercase; padding:3px 6px; }
+  .leaflet-tooltip:before { display:none; }
+
+  .chrome { position:absolute; inset:0; pointer-events:none; z-index:600; }
+  .chrome > * { pointer-events:auto; }
+  .topbar { position:absolute; top:calc(var(--safe-t) + 52px); left:20px; right:20px; display:flex; align-items:center; gap:10px; }
+  .brand { font-family:var(--mono); font-size:11px; letter-spacing:.22em; text-transform:uppercase; background:var(--paper); border:1px solid var(--grid); border-radius:var(--r); padding:9px 14px 8px; white-space:nowrap; }
+  .search { flex:1; display:flex; align-items:center; gap:9px; background:var(--paper); border:1px solid var(--grid); border-radius:var(--r); padding:9px 14px; min-width:0; }
+  .search input { flex:1; min-width:0; border:0; outline:0; background:transparent; font-family:var(--serif); font-size:18px; color:var(--ink); }
+  .search input::placeholder { color:var(--ink-soft); }
+
+  /* The sheet floats over the map, so it must never grow past what the screen
+     can hold — on a short window it scrolls instead of running off the bottom
+     or pushing the map away. */
+  .sheet {
+    position:absolute; left:12px; right:12px; bottom:calc(var(--safe-b) + 28px);
+    background:var(--paper); border:1px solid var(--grid); border-radius:var(--r);
+    padding:14px 16px 16px;
+    max-height:56vh; overflow-y:auto; -webkit-overflow-scrolling:touch;
+  }
+  .grabber { width:34px; height:3px; background:var(--grid); margin:0 auto 13px; }
+  .meter-row { display:flex; align-items:center; gap:9px; }
+  .meter-dot { width:11px; height:11px; box-shadow:inset 0 0 0 1px rgba(0,0,0,.06); }
+  .meter-val { font-family:var(--serif); font-size:28px; font-weight:400; letter-spacing:-.01em; line-height:1; }
+  .meter-tag { margin-left:auto; font-family:var(--mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-soft); }
+  .bar { display:flex; gap:3px; margin:12px 0 0; height:16px; }
+  .bar i { flex:1; }
+  /* POINT A / POINT B — the one thing the app is for, at 4x the chrome size */
+  .ab { margin-top:13px; padding-top:12px; border-top:1px solid var(--grid); display:flex; flex-direction:column; gap:6px; }
+  .ab button {
+    display:flex; align-items:center; gap:11px; width:100%; text-align:left;
+    background:transparent; border:1px solid transparent; border-radius:var(--r);
+    padding:5px 7px; cursor:pointer; color:var(--ink);
+    font-family:var(--serif); font-size:36px; line-height:1; font-weight:400; letter-spacing:-.01em;
+  }
+  .ab button[data-on="true"] { border-color:var(--ink); }
+  .ab button u { width:14px; height:14px; display:block; flex:none; }
+  .ab button span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+  .ab small { font-family:var(--mono); font-size:9px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-soft); margin-left:auto; flex:none; padding-left:8px; }
+
+  /* why it is loud here */
+  .why { margin-top:11px; padding-top:10px; border-top:1px solid var(--grid); font-family:var(--mono); font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-soft); line-height:1.6; }
+  .why b { color:var(--ink); font-weight:500; }
+  .why { overflow-wrap:anywhere; }
+
+  @media (max-height:780px) { .note { display:none; } }
+  .note { position:absolute; top:calc(var(--safe-t) + 106px); left:20px; right:20px; font-family:var(--mono); font-size:9px; line-height:1.7; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); background:var(--paper); border:1px solid var(--grid); border-radius:var(--r); padding:9px 11px; }
+</style>
+</head>
+<body>
+<div class="device">
+<div id="app">
+  <div class="statusbar"><span id="clock">—</span><span class="dots"><i></i><i></i><i></i></span></div>
+  <div class="home-indicator"></div>
+  <div class="capsule"><div id="map"></div><div class="map-tint"></div></div>
+  <div class="chrome">
+    <div class="topbar">
+      <div class="brand">Quiet</div>
+      <div class="search"><input placeholder="Where to?" aria-label="Destination" /></div>
+    </div>
+    <div class="note" id="note">Loading…</div>
+    <div class="sheet">
+      <div class="grabber"></div>
+      <div class="meter-row">
+        <span class="meter-dot" id="dot"></span>
+        <span class="meter-val" id="val">Quiet</span>
+        <span class="meter-tag" id="tag">around you</span>
+      </div>
+      <div class="bar" id="bar"></div>
+      <div class="why" id="why">—</div>
+      <div class="ab">
+        <button id="btn-a" data-on="true"><u style="box-shadow:inset 0 0 0 2px #1C1A16"></u><span>Point A</span><small>you</small></button>
+        <button id="btn-b" data-on="false"><u style="background:#1C1A16"></u><span>Point B</span><small>destination</small></button>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+/* ═══ tokens — parsed from src/design/tokens.ts at build time ═══ */
+const COLORS = {"paper":"#FFFCF3","map":"#FFFFFF","grid":"#E5D2B9","gridDeep":"#D8BF9C","ink":"#1C1A16","inkSoft":"#AEA8A0","route":"#AEA8A0","mapTint":"#E5D2B9"};
+const LEVELS = [{"color":"#E4ECF2","label":"Quiet","note":"quiet"},{"color":"#FFD6FF","label":"Almost quiet","note":"some sound artifact"},{"color":"#87A5FF","label":"Loud","note":"loud"},{"color":"#FF4938","label":"Very loud","note":"very loud"},{"color":"#60545A","label":"Too loud","note":"bad for your ears"}];
+const LEVEL_EDGES = [45,65,78,88];
+const D = {"fine":18,"fineAlpha":0.15,"cityOpacity":0.4,"paperWash":0.5,"cityOpacityNear":0.9,"cityNearZoomLow":13,"cityNearZoomHigh":17,"subdiv":5,"freq":0.11,"edgeFreq":0.18,"flow":0.05,"drift":0.085,"fps":14,"edge":0.55,"octMix":0.35,"octScale":2.3,"octSpeed":1.7,"trace":40,"maxCells":9000,"quietDb":38,"loudDb":100,"minCoverage":0.22,"maxCoverage":1,"curve":1.15,"youRadiusMeters":110,"youInner":0.18,"loudInner":0.3,"minScreenRadius":8};
+const ZONES = [{"id":"311-les-ludlow","name":"311 Hotspot: Lower East Side (Ludlow / Rivington St)","lat":40.7208,"lon":-73.9882,"radiusMeters":280,"decibels":82,"peakDecibels":96,"kind":"311-complaint"},{"id":"311-east-village-st-marks","name":"311 Hotspot: St. Marks Place & 2nd Ave","lat":40.7291,"lon":-73.9885,"radiusMeters":250,"decibels":79,"peakDecibels":92,"kind":"311-complaint"},{"id":"311-williamsburg-bedford","name":"311 Hotspot: Bedford Ave & N 6th St","lat":40.7183,"lon":-73.9576,"radiusMeters":260,"decibels":78,"peakDecibels":91,"kind":"311-complaint"},{"id":"311-bushwick-troutman","name":"311 Hotspot: Bushwick / Jefferson St Corridor","lat":40.7058,"lon":-73.9238,"radiusMeters":300,"decibels":80,"peakDecibels":95,"kind":"311-complaint"},{"id":"311-astoria-steinway","name":"311 Hotspot: Steinway St & Broadway (Astoria)","lat":40.7588,"lon":-73.9189,"radiusMeters":290,"decibels":81,"peakDecibels":97,"kind":"311-complaint"},{"id":"311-fordham-rd","name":"311 Hotspot: Fordham Rd & Grand Concourse","lat":40.8624,"lon":-73.8988,"radiusMeters":340,"decibels":83,"peakDecibels":98,"kind":"311-complaint"},{"id":"mta-subway-grand-central","name":"Grand Central – 42nd St (4/5/6 Express Curve)","lat":40.7517,"lon":-73.9767,"radiusMeters":280,"decibels":88,"peakDecibels":104,"kind":"mta-transit"},{"id":"mta-subway-times-sq","name":"Times Square – 42nd St Subway Complex","lat":40.7556,"lon":-73.9866,"radiusMeters":320,"decibels":86,"peakDecibels":99,"kind":"mta-transit"},{"id":"mta-subway-union-sq","name":"14th St – Union Square (4/5/6 Moving Platform Gap)","lat":40.7359,"lon":-73.9911,"radiusMeters":260,"decibels":85,"peakDecibels":101,"kind":"mta-transit"},{"id":"mta-elevated-roosevelt-7","name":"Roosevelt Ave Elevated (7 Train Corridor)","lat":40.7468,"lon":-73.8913,"radiusMeters":450,"decibels":87,"peakDecibels":103,"kind":"mta-transit"},{"id":"mta-elevated-broadway-brooklyn","name":"Broadway Elevated (J/M/Z Line over Myrtle Ave)","lat":40.6972,"lon":-73.9365,"radiusMeters":400,"decibels":86,"peakDecibels":102,"kind":"mta-transit"},{"id":"mta-subway-atlantic-terminal","name":"Atlantic Terminal / Barclays Center Intermodal","lat":40.6845,"lon":-73.9774,"radiusMeters":310,"decibels":84,"peakDecibels":97,"kind":"mta-transit"},{"id":"dot-siren-midtown-east","name":"Bellevue / NYU Langone Emergency Corridor (1st Ave)","lat":40.7397,"lon":-73.9754,"radiusMeters":450,"decibels":83,"peakDecibels":108,"kind":"traffic-corridor"},{"id":"dot-traffic-times-square","name":"Times Square Crossroads (7th Ave & Broadway)","lat":40.758,"lon":-73.9855,"radiusMeters":360,"decibels":81,"peakDecibels":95,"kind":"traffic-corridor"},{"id":"dot-traffic-herald-sq","name":"Herald Square (34th St & 6th Ave Intersection)","lat":40.7496,"lon":-73.9878,"radiusMeters":300,"decibels":80,"peakDecibels":94,"kind":"traffic-corridor"},{"id":"dot-traffic-canal-st","name":"Canal Street Interstate Truck Corridor (Holland Tunnel Approach)","lat":40.7198,"lon":-74.0025,"radiusMeters":400,"decibels":84,"peakDecibels":98,"kind":"traffic-corridor"},{"id":"dot-traffic-fdr-merge","name":"FDR Drive & Brooklyn Bridge Approach","lat":40.7105,"lon":-73.9998,"radiusMeters":380,"decibels":82,"peakDecibels":94,"kind":"traffic-corridor"},{"id":"dot-traffic-queens-plaza","name":"Queens Plaza & Ed Koch Queensboro Bridge Ramp","lat":40.7505,"lon":-73.94,"radiusMeters":420,"decibels":83,"peakDecibels":97,"kind":"traffic-corridor"},{"id":"dot-traffic-flatbush-ave","name":"Flatbush Ave & Atlantic Ave Intersection","lat":40.6853,"lon":-73.9782,"radiusMeters":350,"decibels":82,"peakDecibels":95,"kind":"traffic-corridor"},{"id":"const-penn-station","name":"Penn Station / MSG Infrastructure Redevelopment","lat":40.7505,"lon":-73.9934,"radiusMeters":320,"decibels":85,"peakDecibels":105,"kind":"construction"},{"id":"const-hudson-yards-phase2","name":"Hudson Yards West & Rail Yard Platform Construction","lat":40.755,"lon":-74.004,"radiusMeters":350,"decibels":83,"peakDecibels":102,"kind":"construction"},{"id":"const-east-river-resiliency","name":"East Side Coastal Resiliency Project (ESCR)","lat":40.7225,"lon":-73.972,"radiusMeters":380,"decibels":81,"peakDecibels":99,"kind":"construction"},{"id":"quiet-central-park-ramble","name":"The Ramble (Central Park Deep Canopy Oasis)","lat":40.7766,"lon":-73.969,"radiusMeters":380,"decibels":42,"peakDecibels":53,"kind":"quiet-haven"},{"id":"quiet-central-park-conservatory","name":"Conservatory Water & Cedar Hill (Central Park)","lat":40.7745,"lon":-73.9675,"radiusMeters":300,"decibels":45,"peakDecibels":55,"kind":"quiet-haven"},{"id":"quiet-cloisters","name":"The Cloisters & Fort Tryon Park Alpine Path","lat":40.8649,"lon":-73.9317,"radiusMeters":450,"decibels":41,"peakDecibels":50,"kind":"quiet-haven"},{"id":"quiet-greenwood","name":"Green-Wood Cemetery Historic Sanctuaries","lat":40.6582,"lon":-73.9942,"radiusMeters":650,"decibels":42,"peakDecibels":52,"kind":"quiet-haven"},{"id":"quiet-botanic-garden","name":"Brooklyn Botanic Garden (Japanese Hill-and-Pond)","lat":40.6677,"lon":-73.9634,"radiusMeters":360,"decibels":43,"peakDecibels":54,"kind":"quiet-haven"},{"id":"quiet-prospect-park-ravine","name":"Prospect Park Ravine (Brooklyn's Only Rainforest)","lat":40.6618,"lon":-73.9698,"radiusMeters":400,"decibels":42,"peakDecibels":52,"kind":"quiet-haven"},{"id":"quiet-stuyvesant-town-oval","name":"Stuyvesant Town Center Oval & Fountain","lat":40.7322,"lon":-73.9782,"radiusMeters":260,"decibels":48,"peakDecibels":58,"kind":"quiet-haven"},{"id":"quiet-washington-mews","name":"Washington Mews & MacDougal Alley","lat":40.7314,"lon":-73.9968,"radiusMeters":180,"decibels":46,"peakDecibels":57,"kind":"quiet-haven"},{"id":"quiet-roosevelt-island-southpoint","name":"Roosevelt Island Southpoint Park & FDR Memorial","lat":40.751,"lon":-73.9585,"radiusMeters":340,"decibels":44,"peakDecibels":54,"kind":"quiet-haven"},{"id":"quiet-wave-hill","name":"Wave Hill Public Garden (Hudson River Overlook)","lat":40.8978,"lon":-73.9118,"radiusMeters":450,"decibels":40,"peakDecibels":50,"kind":"quiet-haven"},{"id":"quiet-snug-harbor","name":"Snug Harbor Cultural Center & Scholar's Garden","lat":40.6433,"lon":-74.1023,"radiusMeters":500,"decibels":42,"peakDecibels":53,"kind":"quiet-haven"}];
+
+function levelFromDb(db) {
+  for (let i = 0; i < LEVEL_EDGES.length; i++) if (db < LEVEL_EDGES[i]) return i;
+  return LEVELS.length - 1;
+}
+
+/* ═══ engine — port of src/design/loudnessField.ts ═══ */
+const clamp = (v,a,b) => v<a?a:v>b?b:v;
+const posMod = (v,m) => ((v % m) + m) % m;
+function smoothstep(a,b,x){ const k = clamp((x-a)/(b-a||1e-6),0,1); return k*k*(3-2*k); }
+function ihash(a,b,c){
+  let h = Math.imul(a|0,374761393) ^ Math.imul(b|0,668265263) ^ Math.imul(c|0,1274126177);
+  h = Math.imul(h ^ (h>>>13), 1274126177);
+  return ((h ^ (h>>>16)) >>> 0) / 4294967296;
+}
+function vnoise(x,y,z){
+  const xi=Math.floor(x), yi=Math.floor(y), zi=Math.floor(z);
+  const xf=x-xi, yf=y-yi, zf=z-zi;
+  const u=xf*xf*(3-2*xf), v=yf*yf*(3-2*yf), w=zf*zf*(3-2*zf);
+  const L=(a,b,k)=>a+(b-a)*k;
+  const plane=(dz)=>L(
+    L(ihash(xi,yi,zi+dz), ihash(xi+1,yi,zi+dz), u),
+    L(ihash(xi,yi+1,zi+dz), ihash(xi+1,yi+1,zi+dz), u), v);
+  return L(plane(0), plane(1), w);
+}
+/* THE MIX COMES FROM THE DATA.
+   Each zone carries two real measurements — baseDecibels and peakDecibels.
+   The share of each colour is the fraction of that measured interval falling
+   in each level's band. A narrow range comes out one flat colour, and that is
+   correct. Nothing here is chosen for looks. */
+/* Two octaves: a slow broad one with a faster finer one over it. One scale of
+   motion reads mechanical; two read like something breathing. */
+function fbm2(x,y,z){
+  return (1-D.octMix)*vnoise(x,y,z) + D.octMix*vnoise(x*D.octScale, y*D.octScale, z*D.octSpeed);
+}
+
+function mixFromRange(baseDb, peakDb){
+  const lo = Math.min(baseDb, peakDb), hi = Math.max(baseDb, peakDb);
+  const out = LEVELS.map(()=>0);
+  if (hi - lo < 1e-6){ out[levelFromDb(lo)] = 1; return out; }
+  // weight decays from base to peak: peaks are brief by definition, so the
+  // sustained level dominates and the peak reads as a minority
+  const tau = (hi - lo) / 3;
+  const w = x => 1 - Math.exp(-(x - lo)/tau);
+  const total = w(hi);
+  const edges = [-Infinity, ...LEVEL_EDGES, Infinity];
+  for (let l=0;l<LEVELS.length;l++){
+    const a = Math.max(lo, edges[l]), b = Math.min(hi, edges[l+1]);
+    if (b > a) out[l] = (w(b) - w(a)) / total;
+  }
+  return out;
+}
+const majorityOf = mix => mix.indexOf(Math.max(...mix));
+
+/** exact counts — the proportions are data, so they are counted, not sampled */
+function allocate(mix, n){
+  const c = mix.map(w=>Math.floor(w*n));
+  if (n >= D.trace) for (let i=0;i<c.length;i++) if (mix[i] > 0 && c[i] === 0) c[i] = 1;
+  const maj = mix.indexOf(Math.max(...mix));
+  c[maj] = Math.max(0, c[maj] + (n - c.reduce((a,b)=>a+b,0)));
+  return c;
+}
+
+/** how much paper the pixels take — a visual encoding of a real dB */
+function coverageFromDb(db){
+  const t = clamp((db - D.quietDb)/(D.loudDb - D.quietDb), 0, 1);
+  return D.minCoverage + (D.maxCoverage - D.minCoverage)*Math.pow(t, D.curve);
+}
+
+function buildPixelField(f, step, vp){
+  const { cell, ox, oy, width, height } = vp;
+  const i0 = Math.max(Math.floor((f.cx-f.r-ox)/cell), Math.floor(-ox/cell));
+  const i1 = Math.min(Math.ceil((f.cx+f.r-ox)/cell), Math.ceil((width-ox)/cell));
+  const j0 = Math.max(Math.floor((f.cy-f.r-oy)/cell), Math.floor(-oy/cell));
+  const j1 = Math.min(Math.ceil((f.cy+f.r-oy)/cell), Math.ceil((height-oy)/cell));
+  if (i1<i0 || j1<j0) return [];
+
+  const zEdge = step*D.drift*1.6 + f.seed;
+  const cover = coverageFromDb(f.db);
+  // the swarm's heading for this zone — its own, so no two drift in step
+  const fx = Math.cos(f.seed)*D.flow*step, fy = Math.sin(f.seed)*D.flow*step;
+
+  const cells = [];
+  for (let i=i0;i<=i1;i++){
+    for (let j=j0;j<=j1;j++){
+      const x = ox+i*cell, y = oy+j*cell;
+      const dx = x+cell/2-f.cx, dy = y+cell/2-f.cy;
+      const d = Math.sqrt(dx*dx+dy*dy)/f.r;
+      if (d>1) continue;
+      const local = cover * (1 - smoothstep(f.inner, 1, d));
+      if (local <= 0.02) continue;
+      if (fbm2(i*D.edgeFreq + fx, j*D.edgeFreq + fy, zEdge) > Math.pow(local, D.edge)) continue;
+      cells.push({ i, j, x, y, l: f.majority });
+      if (cells.length > D.maxCells) break;
+    }
+  }
+  if (!cells.length) return cells;
+
+  const counts = allocate(f.mix, cells.length);
+  const queue = counts.map((n,i)=>({i,n})).filter(o=>o.i!==f.majority && o.n>0).sort((a,b)=>a.n-b.n);
+  let pool = cells;
+  for (const o of queue){
+    const z = step*D.drift + o.i*31.7 + f.seed;
+    for (const c of pool) c.s = fbm2(c.i*D.freq + fx, c.j*D.freq + fy, z);
+    pool.sort((a,b)=>b.s-a.s);
+    const take = Math.min(o.n, pool.length);
+    for (let k=0;k<take;k++) pool[k].l = o.i;
+    pool = pool.slice(take);
+  }
+  return cells;
+}
+
+/* ═══ the map ═══ */
+const START = [40.7580, -73.9855];   // Midtown
+const map = L.map('map', { center: START, zoom: 15, minZoom: 11, maxZoom: 18, zoomControl: false });
+
+// the real NYC map, labels and all — it has to stay readable through the field
+const cityOpacityFor = (z) => {
+  const t = clamp((z - D.cityNearZoomLow) / (D.cityNearZoomHigh - D.cityNearZoomLow), 0, 1);
+  return D.cityOpacity + (D.cityOpacityNear - D.cityOpacity) * t;
+};
+const tiles = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; CARTO &copy; OSM', maxZoom: 19, subdomains: 'abcd',
+  opacity: cityOpacityFor(map.getZoom()), className: 'quiet-tiles',
+}).addTo(map);
+// zoomed out this is a soundscape; zoomed in you are navigating, and the
+// street names have to come through the field
+map.on('zoomend', () => tiles.setOpacity(cityOpacityFor(map.getZoom())));
+
+/* ═══ the design layer — port of src/design/QuietMapLayer.ts ═══ */
+const METRIC_STEPS = [5,10,25,50,100,250,500,1000,2500];
+
+const pane = map.createPane('quietPane');
+pane.style.zIndex = '350';
+pane.style.pointerEvents = 'none';
+
+const canvas = document.createElement('canvas');
+canvas.className = 'quiet-canvas';
+canvas.style.position = 'absolute';
+pane.appendChild(canvas);
+const ctx = canvas.getContext('2d');
+
+let dirty = true, lastStep = -1, hiddenNow = false, cells = [], cellsKey = '';
+const started = performance.now();
+let user = { lat: START[0], lon: START[1] };
+let gridMetres = 0;
+
+const metersPerPixel = (lat) => (40075016.686 * Math.cos(lat*Math.PI/180)) / (256 * Math.pow(2, map.getZoom()));
+
+/** a cell is a round number of metres on the ground, snapped so the pixel
+    (a third of a cell) stays a whole number of screen pixels */
+function gridGeometry(){
+  const mpp = metersPerPixel(map.getCenter().lat);
+  let metres = METRIC_STEPS[0], bestErr = Infinity;
+  for (const m of METRIC_STEPS){ const e = Math.abs(m/mpp - D.fine); if (e < bestErr){ bestErr = e; metres = m; } }
+  const gridPx = Math.max(D.subdiv*3, Math.round(metres/mpp/D.subdiv)*D.subdiv);
+  return { gridPx, cellPx: gridPx/D.subdiv, metres };
+}
+
+/** loudness at a point: the city baseline, raised by hotspots, lowered by havens */
+/* WHAT IS MEASURED, AND NOTHING ELSE.
+   33 zones are measured. The ground between them is not, so nothing is drawn
+   there — bare grid and street map means "no reading", not "quiet". */
+const KIND_WORDS = {
+  'construction': 'Construction', 'nightlife': 'Nightlife',
+  'mta-transit': 'Subway and elevated track', 'subway-screech': 'Subway screech',
+  'traffic-corridor': 'Traffic and sirens', 'traffic-siren': 'Traffic and sirens',
+  '311-complaint': 'Reported to 311', 'quiet-haven': 'Park or sanctuary',
+  'community-report': 'Reported by a neighbour',
+};
+
+/** the measured zone you are standing in, or null — we do not guess */
+function reasonAt(lat, lon){
+  const mLat = 111320, mLon = 111320 * Math.cos(lat*Math.PI/180);
+  let best = null, bestFrac = Infinity;
+  for (const z of ZONES){
+    const dx = (lon - z.lon)*mLon, dy = (lat - z.lat)*mLat;
+    const frac = Math.sqrt(dx*dx + dy*dy) / z.radiusMeters;
+    if (frac > 1) continue;
+    if (frac < bestFrac){ bestFrac = frac; best = z; }
+  }
+  if (!best) return null;
+  const peak = best.peakDecibels != null ? best.peakDecibels : best.decibels;
+  const db = peak + (best.decibels - peak) * smoothstep(0, 1, bestFrac);
+  return { zone: best, db, kind: KIND_WORDS[best.kind] || 'Sound source' };
+}
+
+/** one field per measured zone, bounded by its measured radius */
+function fields(vp){
+  const out = [];
+  ZONES.forEach((z,k)=>{
+    const p = map.latLngToContainerPoint([z.lat, z.lon]);
+    const r = z.radiusMeters / metersPerPixel(z.lat);
+    if (r < D.minScreenRadius) return;
+    const m = 80;
+    if (p.x < -r-m || p.y < -r-m || p.x > vp.width+r+m || p.y > vp.height+r+m) return;
+    const peak = z.peakDecibels != null ? z.peakDecibels : z.decibels;
+    out.push({
+      id: z.id, cx: p.x, cy: p.y, r, inner: D.loudInner,
+      mix: mixFromRange(z.decibels, peak),
+      majority: majorityOf(mixFromRange(z.decibels, peak)),
+      db: z.decibels, seed: k*13.7,
+    });
+  });
+  return out;
+}
+
+function reposition(){
+  const size = map.getSize();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+  if (canvas.width !== Math.round(size.x*dpr) || canvas.height !== Math.round(size.y*dpr)){
+    canvas.width = Math.round(size.x*dpr); canvas.height = Math.round(size.y*dpr);
+    canvas.style.width = size.x+'px'; canvas.style.height = size.y+'px';
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  L.DomUtil.setPosition(canvas, map.containerPointToLayerPoint([0,0]));
+  cellsKey = ''; dirty = true;
+}
+map.on('move zoom resize viewreset zoomend moveend', reposition);
+map.on('zoomanim', ()=>{ hiddenNow = true; canvas.style.opacity = '0'; });
+map.on('zoomend',  ()=>{ hiddenNow = false; canvas.style.opacity = '1'; cellsKey=''; dirty = true; });
+
+function render(step){
+  const size = map.getSize();
+  const geo = gridGeometry();
+  gridMetres = geo.metres;
+  const tl = map.containerPointToLayerPoint([0,0]);
+  const gOx = Math.round(-posMod(tl.x, geo.gridPx)), gOy = Math.round(-posMod(tl.y, geo.gridPx));
+  const vp = {
+    width:size.x, height:size.y,
+    ox: Math.round(-posMod(tl.x, geo.cellPx)),
+    oy: Math.round(-posMod(tl.y, geo.cellPx)),
+    cell: geo.cellPx,
+  };
+
+  ctx.clearRect(0,0,size.x,size.y);
+
+  // the plate is white; the paper tone is a wash over it, above the tiles
+  ctx.fillStyle = COLORS.paper;
+  ctx.globalAlpha = D.paperWash;
+  ctx.fillRect(0,0,size.x,size.y);
+  ctx.globalAlpha = 1;
+
+  // the measured grid
+  ctx.save();
+  ctx.strokeStyle = COLORS.grid; ctx.globalAlpha = D.fineAlpha; ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x=gOx; x<size.x; x+=geo.gridPx){ const px=Math.round(x)+0.5; ctx.moveTo(px,0); ctx.lineTo(px,size.y); }
+  for (let y=gOy; y<size.y; y+=geo.gridPx){ const py=Math.round(y)+0.5; ctx.moveTo(0,py); ctx.lineTo(size.x,py); }
+  ctx.stroke(); ctx.restore();
+
+  const key = step+'|'+Math.round(tl.x)+'|'+Math.round(tl.y)+'|'+geo.cellPx+'|'+map.getZoom();
+  if (key !== cellsKey){
+    cellsKey = key;
+    cells = [];
+    for (const f of fields(vp)) cells.push(...buildPixelField(f, step, vp));
+  }
+
+  for (const c of cells){ ctx.fillStyle = LEVELS[c.l].color; ctx.fillRect(c.x, c.y, geo.cellPx, geo.cellPx); }
+}
+
+function tick(){
+  requestAnimationFrame(tick);
+  if (hiddenNow) return;
+  const step = Math.floor(((performance.now()-started)/1000) * D.fps);
+  if (step !== lastStep){ lastStep = step; dirty = true; }
+  if (!dirty) return;
+  dirty = false;
+  render(step);
+  document.getElementById('note').innerHTML =
+    'Design preview · ' + ZONES.length + ' real NYC zones<br>1 grid cell = ' + gridMetres + ' m on the ground';
+}
+
+/* ═══ you, and where you are going ═══ */
+const youIcon = L.divIcon({
+  className: '',
+  // you: a hollow square — the same bounding box as point A
+  html: '<div style="width:12px;height:12px;box-shadow:inset 0 0 0 2px '+COLORS.ink+'"></div>',
+  iconSize: [12,12], iconAnchor: [6,6],
+});
+const destIcon = L.divIcon({
+  className: '',
+  // destination: same shape, same colour, solid
+  html: '<div style="width:12px;height:12px;background:'+COLORS.ink+'"></div>',
+  iconSize: [12,12], iconAnchor: [6,6],
+});
+
+let dest = { lat: 40.7420, lon: -73.9890 };
+
+const youMarker = L.marker([user.lat, user.lon], { icon: youIcon, zIndexOffset: 1000, draggable: true })
+  .addTo(map).bindTooltip('You', { permanent: true, direction: 'right', offset: [9,0] });
+const destMarker = L.marker([dest.lat, dest.lon], { icon: destIcon, zIndexOffset: 1000, draggable: true })
+  .addTo(map).bindTooltip('Destination', { permanent: true, direction: 'right', offset: [9,0] });
+
+/* the path: top layer, multiplying with the sound beneath it, so it darkens
+   wherever it crosses noise and stays flat across quiet ground */
+function routeCoords(a, b){
+  const mLat = a.lat + (b.lat - a.lat) * 0.55;
+  const mLon = a.lon + (b.lon - a.lon) * 0.45;
+  return [[a.lat,a.lon],[a.lat,mLon],[mLat,mLon],[mLat,b.lon],[b.lat,b.lon]];
+}
+const routeLine = L.polyline(routeCoords(user, dest), {
+  color: COLORS.route, weight: 3.5, opacity: 1,
+  lineJoin: 'round', lineCap: 'round', className: 'quiet-route',
+}).addTo(map);
+const redrawRoute = () => routeLine.setLatLngs(routeCoords(user, dest));
+
+function moveUser(lat, lon){
+  user = { lat, lon };
+  youMarker.setLatLng([lat, lon]);
+  redrawRoute();
+  cellsKey = ''; dirty = true;
+}
+youMarker.on('drag', (e) => { const ll = e.target.getLatLng(); moveUser(ll.lat, ll.lng); });
+destMarker.on('drag', (e) => { const ll = e.target.getLatLng(); dest = { lat: ll.lat, lon: ll.lng }; redrawRoute(); });
+
+let active = 'a';
+const btnA = document.getElementById('btn-a'), btnB = document.getElementById('btn-b');
+function setActive(which){
+  active = which;
+  btnA.dataset.on = String(which === 'a');
+  btnB.dataset.on = String(which === 'b');
+}
+btnA.onclick = () => setActive('a');
+btnB.onclick = () => setActive('b');
+
+map.on('click', (e) => {
+  if (active === 'a') { moveUser(e.latlng.lat, e.latlng.lng); }
+  else { dest = { lat: e.latlng.lat, lon: e.latlng.lng }; destMarker.setLatLng(e.latlng); redrawRoute(); }
+});
+
+// zones stay tappable
+for (const z of ZONES){
+  L.circle([z.lat,z.lon], { radius: z.radiusMeters, stroke:false, fillColor:'#fff', fillOpacity:0.01 })
+    .bindTooltip(z.name, { sticky: true }).addTo(map);
+}
+
+/* ═══ the sheet ═══ */
+const bar = document.getElementById('bar');
+const CELLS = 25;
+for (let i=0;i<CELLS;i++) bar.appendChild(document.createElement('i'));
+
+function updateSheet(){
+  const why = reasonAt(user.lat, user.lon);
+  const val = document.getElementById('val');
+  const tag = document.getElementById('tag');
+  const dot = document.getElementById('dot');
+  const bar = document.getElementById('bar');
+
+  if (!why){
+    // no measurement covers this point, and the interface says exactly that
+    val.textContent = 'No reading';
+    tag.textContent = 'unmeasured ground';
+    dot.style.background = 'transparent';
+    dot.style.boxShadow = 'inset 0 0 0 1px ' + COLORS.grid;
+    document.getElementById('why').innerHTML =
+      'No measurement covers this point.<br>33 zones are measured; the rest of the city is not.';
+    [...bar.children].forEach(c => { c.style.background = COLORS.grid; c.style.opacity = 0.35; });
+    return;
+  }
+
+  const lvl = levelFromDb(why.db);
+  val.textContent = LEVELS[lvl].label;
+  tag.textContent = LEVELS[lvl].note;
+  dot.style.background = LEVELS[lvl].color;
+  dot.style.boxShadow = 'inset 0 0 0 1px rgba(0,0,0,.06)';
+  document.getElementById('why').innerHTML =
+    'Because of <b>' + why.kind + '</b><br>' + why.zone.name;
+
+  [...bar.children].forEach((c,i)=>{
+    const band = Math.min(LEVELS.length-1, Math.floor(i/(CELLS/LEVELS.length)));
+    const on = band <= lvl;
+    c.style.background = on ? LEVELS[band].color : COLORS.grid;
+    c.style.opacity = on ? 1 : 0.35;
+  });
+}
+setInterval(updateSheet, 150);
+
+/* the real time, not a mocked-up 9:41 */
+function tickClock(){
+  const d = new Date();
+  document.getElementById('clock').textContent =
+    d.getHours() + ':' + String(d.getMinutes()).padStart(2,'0');
+}
+tickClock(); setInterval(tickClock, 10000);
+
+/* nothing overlaps by assumption — the sheet's real height is measured and
+   published, and anything that must clear it reads the measurement */
+const sheetEl = document.querySelector('.sheet');
+function measureSheet(){
+  document.documentElement.style.setProperty('--sheet-h', sheetEl.offsetHeight + 'px');
+}
+measureSheet();
+new ResizeObserver(measureSheet).observe(sheetEl);
+window.addEventListener('resize', measureSheet);
+
+reposition();
+updateSheet();
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>
