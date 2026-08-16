@@ -73,7 +73,8 @@ async function fetchValhallaRoutes(
   endLon: number,
   viaLat?: number,
   viaLon?: number,
-  numAlternates: number = 3
+  numAlternates: number = 3,
+  avoidLocations?: { lat: number; lon: number; radius: number }[]
 ): Promise<WalkableRoute[]> {
   const locations: any[] = [{ lat: startLat, lon: startLon }];
   if (viaLat !== undefined && viaLon !== undefined) {
@@ -81,12 +82,17 @@ async function fetchValhallaRoutes(
   }
   locations.push({ lat: endLat, lon: endLon });
 
-  const reqBody = {
+  const reqBody: any = {
     locations,
     costing: 'pedestrian',
     alternates: numAlternates,
     units: 'km',
   };
+
+  if (avoidLocations && avoidLocations.length > 0) {
+    // Limit to maximum 15 avoid locations to keep Valhalla request payload fast
+    reqBody.avoid_locations = avoidLocations.slice(0, 15);
+  }
 
   // Use Vite dev server proxy first (bypasses any browser network issues),
   // then fall back to direct API calls
@@ -98,6 +104,9 @@ async function fetchValhallaRoutes(
   ];
 
   for (const base of endpoints) {
+    if (typeof window === 'undefined' && base.startsWith('/')) {
+      continue; // Skip relative URLs in Node.js test environments
+    }
     try {
       const url = `${base}?json=${encodeURIComponent(JSON.stringify(reqBody))}`;
       console.log('[LLLoud Router] Fetching Valhalla:', url.substring(0, 120) + '...');
@@ -373,14 +382,34 @@ export async function calculateWalkableCommuteRoutesAsync(
 
   // ── 3. Quietest: avoid noise zones that intersect the direct path ────────────
   const hazardsOnPath = findNoiseHazardsAlongPath(fastestWalk.coordinates, communityReports, userLogs);
+  const nearbyQuietHavens = collectNearbyQuietHavens(oLat, oLon, dLat, dLon);
+  
   let quietCandidates = [...allRoutes];
+
+  // Request route options from Valhalla that natively avoid the path hazards
   if (hazardsOnPath.length > 0) {
+    const valhallaAvoidRoutes = await fetchValhallaRoutes(
+      oLat, oLon, dLat, dLon, 
+      undefined, undefined, 
+      3, 
+      hazardsOnPath.map(h => ({ lat: h.lat, lon: h.lon, radius: h.radius }))
+    );
+    quietCandidates.push(...valhallaAvoidRoutes);
+
+    // Keep legacy detours as a secondary fallback
     const detours = generateDetourWaypoints(oLat, oLon, dLat, dLon, hazardsOnPath, 150);
-    for (const via of detours.slice(0, 4)) {
+    for (const via of detours.slice(0, 3)) {
       const r = await fetchValhallaRoutes(oLat, oLon, dLat, dLon, via[0], via[1], 1);
       quietCandidates.push(...r);
     }
   }
+
+  // Actively try routing through nearby quiet havens (parks)
+  for (const haven of nearbyQuietHavens.slice(0, 3)) {
+    const r = await fetchValhallaRoutes(oLat, oLon, dLat, dLon, haven.lat, haven.lon, 1);
+    quietCandidates.push(...r);
+  }
+
   const quietEvaluated = quietCandidates.map(r => evaluateRouteAcousticCost(r, communityReports, userLogs));
   quietEvaluated.sort((a, b) => a.totalCost - b.totalCost);
   let quietestWalk = quietEvaluated[0].route;
@@ -391,15 +420,31 @@ export async function calculateWalkableCommuteRoutesAsync(
   //   around the route, not just the ones directly intersecting it.
   const allNearbyHazards = collectAllNearbyHazards(oLat, oLon, dLat, dLon, communityReports, userLogs);
   let avoidCandidates = [...allRoutes];
+
   if (allNearbyHazards.length > 0) {
-    // Use larger clearance (radius + 300m) and try both perpendicular sides for each hazard
+    // Request route options from Valhalla that natively avoid all nearby hazards
+    const valhallaAvoidAllRoutes = await fetchValhallaRoutes(
+      oLat, oLon, dLat, dLon, 
+      undefined, undefined, 
+      3, 
+      allNearbyHazards.map(h => ({ lat: h.lat, lon: h.lon, radius: h.radius + 100 }))
+    );
+    avoidCandidates.push(...valhallaAvoidAllRoutes);
+
+    // Keep legacy detours as a secondary fallback
     const avoidDetours = generateDetourWaypoints(oLat, oLon, dLat, dLon, allNearbyHazards, 300);
-    // Also try chaining two detour waypoints together for the most deviated route
-    for (const via of avoidDetours.slice(0, 6)) {
+    for (const via of avoidDetours.slice(0, 4)) {
       const r = await fetchValhallaRoutes(oLat, oLon, dLat, dLon, via[0], via[1], 1);
       avoidCandidates.push(...r);
     }
   }
+
+  // Also include the park/haven routes in Avoid-Noise candidates
+  for (const haven of nearbyQuietHavens.slice(0, 3)) {
+    const r = await fetchValhallaRoutes(oLat, oLon, dLat, dLon, haven.lat, haven.lon, 1);
+    avoidCandidates.push(...r);
+  }
+
   // Score with a much harsher noise penalty to strongly prefer very quiet paths
   const avoidEvaluated = avoidCandidates.map(r =>
     evaluateRouteAcousticCost(r, communityReports, userLogs, /* harshPenalty */ true)
@@ -697,4 +742,31 @@ function detectAvoidedHazards(
   }
 
   return avoided.slice(0, 4);
+}
+
+/**
+ * Find quiet-haven zones (parks, pedestrian sanctuaries) within the bounding box of the A→B route corridor
+ */
+function collectNearbyQuietHavens(
+  oLat: number, oLon: number, dLat: number, dLon: number
+): { lat: number; lon: number; name: string }[] {
+  const havens: { lat: number; lon: number; name: string }[] = [];
+  const seen = new Set<string>();
+
+  const minLat = Math.min(oLat, dLat) - 0.015;
+  const maxLat = Math.max(oLat, dLat) + 0.015;
+  const minLon = Math.min(oLon, dLon) - 0.015;
+  const maxLon = Math.max(oLon, dLon) + 0.015;
+
+  for (const zone of NYC_SOUND_ZONES) {
+    if (zone.type !== 'quiet-haven') continue;
+    if (zone.latitude < minLat || zone.latitude > maxLat ||
+        zone.longitude < minLon || zone.longitude > maxLon) continue;
+    if (!seen.has(zone.id)) {
+      seen.add(zone.id);
+      havens.push({ lat: zone.latitude, lon: zone.longitude, name: zone.name });
+    }
+  }
+
+  return havens;
 }
