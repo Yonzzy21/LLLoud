@@ -41,7 +41,7 @@ import { RouteProfileChart } from './components/RouteProfileChart';
 import { audioEngine, classifyDecibels } from './utils/audioEngine';
 import { geoManager, getAcousticContext } from './utils/geoUtils';
 import { calculateWalkableCommuteRoutesAsync } from './utils/pedestrianRouter';
-import { fetchLiveNyc311NoiseComplaints } from './utils/nycOpenData';
+import { fetchLiveNyc311NoiseComplaints, fetchNyc311AsCommunityReports } from './utils/nycOpenData';
 import { NYC_PRESET_ROUTES, NYC_NEIGHBORHOODS, SILENCE_LEVEL_CONFIGS } from './data/nycSoundData';
 import { 
   CommunityNoiseReport,
@@ -83,6 +83,15 @@ export default function App() {
     }
     return [];
   });
+
+  // --- Live NYC 311 noise complaints (merged into router for avoidance) ---
+  const [nyc311Reports, setNyc311Reports] = useState<CommunityNoiseReport[]>([]);
+  useEffect(() => {
+    fetchNyc311AsCommunityReports(120).then((r) => {
+      console.log(`[LLLoud] ✅ Loaded ${r.length} live 311 noise reports into router`);
+      setNyc311Reports(r);
+    }).catch(console.error);
+  }, []);
 
   // Save community reports & broadcast live to all tabs / browser instances
   useEffect(() => {
@@ -171,15 +180,18 @@ export default function App() {
   // Computed Real Walkable Commute Routes
   const [fastestRoute, setFastestRoute] = useState<NavRoute | null>(null);
   const [quietestRoute, setQuietestRoute] = useState<NavRoute | null>(null);
+  const [avoidNoiseRoute, setAvoidNoiseRoute] = useState<NavRoute | null>(null);
   const [routeDelta, setRouteDelta] = useState<RouteComparisonDelta>({
     decibelReduction: 12.0,
     timeDifferenceMinutes: 3,
     distanceDifferenceMeters: 220,
     silenceScoreDifference: 35,
+    avoidNoiseDecibelReduction: 18.0,
+    avoidNoiseTimeDifference: 6,
   });
 
-  // Stable key for route recalculation — only recalculate when actual coordinates change
-  const routeKey = `${origin.latitude.toFixed(5)},${origin.longitude.toFixed(5)}|${destination.latitude.toFixed(5)},${destination.longitude.toFixed(5)}|${communityReports.length}`;
+  // Stable key for route recalculation — only recalculate when actual coordinates or report counts change
+  const routeKey = `${origin.latitude.toFixed(5)},${origin.longitude.toFixed(5)}|${destination.latitude.toFixed(5)},${destination.longitude.toFixed(5)}|${communityReports.length}|${nyc311Reports.length}|${logs.length}`;
 
   // Calculate 100% real walkable pedestrian routes
   useEffect(() => {
@@ -187,14 +199,21 @@ export default function App() {
     setIsCalculatingRoutes(true);
     console.log('[LLLoud] Calculating routes for:', routeKey);
 
-    calculateWalkableCommuteRoutesAsync(origin, destination, communityReports).then((res) => {
+    // Pass user logs so the router avoids spots the user has personally logged as loud
+    const logSummary = logs.map(l => ({ latitude: l.latitude, longitude: l.longitude, decibels: l.decibels }));
+
+    // Merge user reports with live 311 complaints — router avoids both
+    const allNoiseReports = [...communityReports, ...nyc311Reports];
+    calculateWalkableCommuteRoutesAsync(origin, destination, allNoiseReports, logSummary).then((res) => {
       if (!isCancelled) {
         console.log('[LLLoud] ✅ Routes calculated:', {
           fastest: `${res.fastestRoute.distanceMeters}m, ${res.fastestRoute.coordinates.length} pts`,
           quietest: `${res.quietestRoute.distanceMeters}m, ${res.quietestRoute.coordinates.length} pts`,
+          avoidNoise: `${res.avoidNoiseRoute.distanceMeters}m, ${res.avoidNoiseRoute.coordinates.length} pts`,
         });
         setFastestRoute(res.fastestRoute);
         setQuietestRoute(res.quietestRoute);
+        setAvoidNoiseRoute(res.avoidNoiseRoute);
         setRouteDelta(res.delta);
         setIsCalculatingRoutes(false);
       }
@@ -208,7 +227,10 @@ export default function App() {
     };
   }, [routeKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const activeRoute = selectedSilenceLevel === 'quietest' ? (quietestRoute || fastestRoute) : (fastestRoute || quietestRoute);
+  const activeRoute =
+    selectedSilenceLevel === 'avoid-noise' ? (avoidNoiseRoute || quietestRoute || fastestRoute) :
+    selectedSilenceLevel === 'quietest'    ? (quietestRoute || fastestRoute) :
+                                             (fastestRoute || quietestRoute);
 
   // Mobile Walking Navigation HUD State
   const [simulationState, setSimulationState] = useState<NavigationSimulationState>({
@@ -605,77 +627,95 @@ export default function App() {
               </div>
             </div>
 
-            {/* 2 Route Comparison Cards */}
+            {/* 3 Route Comparison Cards */}
             {fastestRoute && quietestRoute && (
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-stone-400">Choose Option</span>
-                  <span className="text-[11px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-2 py-0.5 rounded-full">
-                    🌿 -{routeDelta.decibelReduction} dB Quieter!
+                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-stone-400">Choose Route</span>
+                  <span className="text-[11px] font-bold text-cyan-400 bg-cyan-950/60 border border-cyan-800/60 px-2 py-0.5 rounded-full">
+                    🤫 3 Options
                   </span>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2.5">
+                <div className="grid grid-cols-3 gap-2">
                   {/* 1. Fastest Commute */}
                   <div
                     onClick={() => setSelectedSilenceLevel('fastest')}
-                    className={`p-3 rounded-2xl border transition-all cursor-pointer ${
+                    className={`p-2.5 rounded-2xl border transition-all cursor-pointer ${
                       selectedSilenceLevel === 'fastest'
                         ? 'bg-rose-950/50 border-rose-500 shadow-lg ring-1 ring-rose-500'
                         : 'bg-stone-900/60 border-stone-800 hover:border-stone-700'
                     }`}
                   >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-extrabold text-xs text-rose-400 flex items-center gap-1">
-                        <Zap className="w-3.5 h-3.5 fill-current" />
-                        <span>Fastest</span>
-                      </span>
-                      <span className="text-[10px] font-mono text-stone-400">
-                        {Math.round(fastestRoute.distanceMeters / 1000 * 10) / 10} km
-                      </span>
+                    <div className="font-extrabold text-[10px] text-rose-400 flex items-center gap-1 mb-1">
+                      <Zap className="w-3 h-3 fill-current" />
+                      <span>Fastest</span>
                     </div>
-                    <div className="text-xl font-black text-white font-mono">
-                      {fastestRoute.durationMinutes} <span className="text-xs font-normal text-stone-400">min</span>
+                    <div className="text-lg font-black text-white font-mono leading-none">
+                      {fastestRoute.durationMinutes}<span className="text-[9px] font-normal text-stone-400 ml-0.5">min</span>
                     </div>
-                    <div className="text-[10px] text-stone-400 mt-1 flex items-center justify-between">
-                      <span>Avg Noise:</span>
-                      <span className="font-mono font-bold text-rose-300">{fastestRoute.averageDecibels} dB</span>
-                    </div>
+                    <div className="text-[9px] text-stone-500 mt-1">{Math.round(fastestRoute.distanceMeters / 100) / 10} km</div>
+                    <div className="text-[9px] font-mono font-bold text-rose-300 mt-0.5">{fastestRoute.averageDecibels} dB</div>
                   </div>
 
                   {/* 2. Quietest Route */}
                   <div
                     onClick={() => setSelectedSilenceLevel('quietest')}
-                    className={`p-3 rounded-2xl border transition-all cursor-pointer ${
+                    className={`p-2.5 rounded-2xl border transition-all cursor-pointer ${
                       selectedSilenceLevel === 'quietest'
                         ? 'bg-emerald-950/60 border-emerald-500 shadow-lg ring-1 ring-emerald-500'
                         : 'bg-stone-900/60 border-stone-800 hover:border-stone-700'
                     }`}
                   >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-extrabold text-xs text-emerald-400 flex items-center gap-1">
-                        <Trees className="w-3.5 h-3.5 fill-current" />
-                        <span>Quietest</span>
-                      </span>
-                      <span className="text-[10px] font-mono text-stone-400">
-                        {Math.round(quietestRoute.distanceMeters / 1000 * 10) / 10} km
-                      </span>
+                    <div className="font-extrabold text-[10px] text-emerald-400 flex items-center gap-1 mb-1">
+                      <Trees className="w-3 h-3 fill-current" />
+                      <span>Quietest</span>
                     </div>
-                    <div className="text-xl font-black text-emerald-300 font-mono">
-                      {quietestRoute.durationMinutes} <span className="text-xs font-normal text-stone-400">min</span>
+                    <div className="text-lg font-black text-emerald-300 font-mono leading-none">
+                      {quietestRoute.durationMinutes}<span className="text-[9px] font-normal text-stone-400 ml-0.5">min</span>
                     </div>
-                    <div className="text-[10px] text-stone-400 mt-1 flex items-center justify-between">
-                      <span>Avg Noise:</span>
-                      <span className="font-mono font-bold text-emerald-400">{quietestRoute.averageDecibels} dB</span>
-                    </div>
+                    <div className="text-[9px] text-stone-500 mt-1">{Math.round(quietestRoute.distanceMeters / 100) / 10} km</div>
+                    <div className="text-[9px] font-mono font-bold text-emerald-400 mt-0.5">{quietestRoute.averageDecibels} dB</div>
                   </div>
+
+                  {/* 3. Noise-Free Route */}
+                  <div
+                    onClick={() => setSelectedSilenceLevel('avoid-noise')}
+                    className={`p-2.5 rounded-2xl border transition-all cursor-pointer ${
+                      selectedSilenceLevel === 'avoid-noise'
+                        ? 'bg-cyan-950/60 border-cyan-500 shadow-lg ring-1 ring-cyan-500'
+                        : 'bg-stone-900/60 border-stone-800 hover:border-stone-700'
+                    }`}
+                  >
+                    <div className="font-extrabold text-[10px] text-cyan-400 flex items-center gap-1 mb-1">
+                      <ShieldCheck className="w-3 h-3" />
+                      <span>No Noise</span>
+                    </div>
+                    <div className="text-lg font-black text-cyan-300 font-mono leading-none">
+                      {avoidNoiseRoute ? avoidNoiseRoute.durationMinutes : '…'}<span className="text-[9px] font-normal text-stone-400 ml-0.5">min</span>
+                    </div>
+                    <div className="text-[9px] text-stone-500 mt-1">{avoidNoiseRoute ? `${Math.round(avoidNoiseRoute.distanceMeters / 100) / 10} km` : '—'}</div>
+                    <div className="text-[9px] font-mono font-bold text-cyan-400 mt-0.5">{avoidNoiseRoute ? `${avoidNoiseRoute.averageDecibels} dB` : '—'}</div>
+                  </div>
+                </div>
+
+                {/* dB savings badge */}
+                <div className="flex gap-2 text-[10px]">
+                  <span className="flex-1 text-center bg-emerald-950/40 border border-emerald-800/40 text-emerald-400 rounded-lg py-1 font-bold">
+                    🌿 Quietest saves {routeDelta.decibelReduction} dB
+                  </span>
+                  <span className="flex-1 text-center bg-cyan-950/40 border border-cyan-800/40 text-cyan-400 rounded-lg py-1 font-bold">
+                    🤫 No-noise saves {routeDelta.avoidNoiseDecibelReduction} dB
+                  </span>
                 </div>
 
                 {/* Big Start Walking Button */}
                 <button
                   onClick={handleStartNavigation}
                   className={`w-full py-3 rounded-2xl font-black text-sm tracking-wide shadow-xl flex items-center justify-center gap-2 transition-transform active:scale-98 cursor-pointer ${
-                    selectedSilenceLevel === 'quietest'
+                    selectedSilenceLevel === 'avoid-noise'
+                      ? 'bg-cyan-500 hover:bg-cyan-400 text-stone-950'
+                      : selectedSilenceLevel === 'quietest'
                       ? 'bg-emerald-500 hover:bg-emerald-400 text-stone-950'
                       : 'bg-rose-500 hover:bg-rose-400 text-white'
                   }`}
@@ -737,6 +777,7 @@ export default function App() {
                 activeRoute={activeRoute}
                 fastestRoute={fastestRoute}
                 quietestRoute={quietestRoute}
+                avoidNoiseRoute={avoidNoiseRoute}
                 origin={origin}
                 destination={destination}
                 simulationState={simulationState}
@@ -823,6 +864,7 @@ export default function App() {
                     destination={destination}
                     fastestRoute={fastestRoute}
                     quietestRoute={quietestRoute}
+                    avoidNoiseRoute={avoidNoiseRoute}
                     delta={routeDelta}
                     selectedSilenceLevel={selectedSilenceLevel}
                     onSelectSilenceLevel={setSelectedSilenceLevel}
@@ -861,6 +903,7 @@ export default function App() {
                 logs={logs}
                 fastestRoute={fastestRoute}
                 quietestRoute={quietestRoute}
+                avoidNoiseRoute={avoidNoiseRoute}
                 activeRoute={activeRoute}
                 origin={origin}
                 destination={destination}

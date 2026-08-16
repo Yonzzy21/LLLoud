@@ -19,6 +19,15 @@ export const SILENCE_LEVEL_CONFIGS: Record<string, SilenceLevelConfig> = {
     colorHex: '#10b981', // Emerald
     badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
   },
+  'avoid-noise': {
+    id: 'avoid-noise',
+    name: 'Noise-Free Route',
+    tagline: 'Hard Avoid All Noise Zones',
+    description: 'Aggressively re-routes around every known noise zone, 311 hotspot, and community-logged noise spot — even if it takes longer.',
+    targetDbRange: '< 45 dB',
+    colorHex: '#06b6d4', // Cyan
+    badgeClass: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40',
+  },
 };
 
 export const NYC_SOUND_ZONES: SoundDensityZone[] = [

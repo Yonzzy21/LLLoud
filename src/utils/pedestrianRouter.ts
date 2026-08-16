@@ -202,15 +202,39 @@ function getCalculatedSplAtPoint(
   return { decibels: db, isSanctuary: acoustic.isSanctuary, dominantSource: acoustic.dominantSource };
 }
 
+function getCalculatedSplWithLogs(
+  lat: number,
+  lon: number,
+  communityReports: CommunityNoiseReport[],
+  userLogs: { latitude: number; longitude: number; decibels: number }[]
+): { decibels: number; isSanctuary: boolean; dominantSource: string } {
+  const base = getCalculatedSplAtPoint(lat, lon, communityReports);
+  let db = base.decibels;
+  // Blend in nearby user-logged readings
+  for (const log of userLogs) {
+    const d = getDistanceMeters(lat, lon, log.latitude, log.longitude);
+    if (d < 150) {
+      const factor = Math.max(0, 1 - d / 150);
+      db = Math.max(db, log.decibels * factor + db * (1 - factor));
+    }
+  }
+  return { decibels: db, isSanctuary: base.isSanctuary, dominantSource: base.dominantSource };
+}
+
 function evaluateRouteAcousticCost(
   route: WalkableRoute,
-  communityReports: CommunityNoiseReport[]
+  communityReports: CommunityNoiseReport[],
+  userLogs: { latitude: number; longitude: number; decibels: number }[] = [],
+  harshPenalty = false
 ): { route: WalkableRoute; totalCost: number; avgDb: number; peakDb: number } {
   const coords = route.coordinates;
   let totalCost = 0;
   let sumDb = 0;
   let peakDb = 0;
   const sampleStep = Math.max(1, Math.floor(coords.length / 80));
+  // Harsh penalty exponent — much steeper for avoid-noise mode
+  const penaltyExp = harshPenalty ? 3.8 : 2.3;
+  const penaltyScale = harshPenalty ? 12.0 : 5.0;
 
   for (let i = 0; i < coords.length - 1; i += sampleStep) {
     const p1 = coords[i];
@@ -218,16 +242,16 @@ function evaluateRouteAcousticCost(
     const segDist = getDistanceMeters(p1[0], p1[1], p2[0], p2[1]);
     const midLat = (p1[0] + p2[0]) / 2;
     const midLon = (p1[1] + p2[1]) / 2;
-    const { decibels, isSanctuary } = getCalculatedSplAtPoint(midLat, midLon, communityReports);
+    const { decibels, isSanctuary } = getCalculatedSplWithLogs(midLat, midLon, communityReports, userLogs);
 
     sumDb += decibels;
     if (decibels > peakDb) peakDb = decibels;
 
     let noiseFactor = 1.0;
-    if (decibels > 48) {
-      noiseFactor += 5.0 * Math.pow((decibels - 48) / 10, 2.3);
+    if (decibels > 45) {
+      noiseFactor += penaltyScale * Math.pow((decibels - 45) / 10, penaltyExp);
     }
-    if (isSanctuary) noiseFactor = Math.max(0.15, noiseFactor * 0.3);
+    if (isSanctuary) noiseFactor = Math.max(0.1, noiseFactor * 0.2);
 
     totalCost += segDist * noiseFactor;
   }
@@ -242,7 +266,8 @@ function evaluateRouteAcousticCost(
 // ============================================================================
 function findNoiseHazardsAlongPath(
   coords: [number, number][],
-  communityReports: CommunityNoiseReport[]
+  communityReports: CommunityNoiseReport[],
+  userLogs: { latitude: number; longitude: number; decibels: number }[] = []
 ): { lat: number; lon: number; radius: number; db: number }[] {
   const hazards: { lat: number; lon: number; radius: number; db: number }[] = [];
   const seen = new Set<string>();
@@ -260,12 +285,24 @@ function findNoiseHazardsAlongPath(
   }
 
   for (const report of communityReports) {
-    if (report.decibels < 70) continue;
+    if (report.decibels < 65) continue;
     for (let i = 0; i < coords.length; i += step) {
       const d = getDistanceMeters(coords[i][0], coords[i][1], report.latitude, report.longitude);
-      if (d < 150 && !seen.has(report.id)) {
+      if (d < 160 && !seen.has(report.id)) {
         seen.add(report.id);
-        hazards.push({ lat: report.latitude, lon: report.longitude, radius: 150, db: report.decibels });
+        hazards.push({ lat: report.latitude, lon: report.longitude, radius: 160, db: report.decibels });
+      }
+    }
+  }
+
+  for (const log of userLogs) {
+    if (log.decibels < 65) continue;
+    for (let i = 0; i < coords.length; i += step) {
+      const d = getDistanceMeters(coords[i][0], coords[i][1], log.latitude, log.longitude);
+      const key = `log-${log.latitude.toFixed(4)}-${log.longitude.toFixed(4)}`;
+      if (d < 120 && !seen.has(key)) {
+        seen.add(key);
+        hazards.push({ lat: log.latitude, lon: log.longitude, radius: 120, db: log.decibels });
       }
     }
   }
@@ -275,7 +312,8 @@ function findNoiseHazardsAlongPath(
 
 function generateDetourWaypoints(
   oLat: number, oLon: number, dLat: number, dLon: number,
-  hazards: { lat: number; lon: number; radius: number }[]
+  hazards: { lat: number; lon: number; radius: number }[],
+  extraClearance = 150
 ): [number, number][] {
   const waypoints: [number, number][] = [];
   const lonScale = Math.cos((40.75 * Math.PI) / 180);
@@ -286,7 +324,7 @@ function generateDetourWaypoints(
   const perpY = dxTravel / travelLen;
 
   for (const h of hazards) {
-    const clearance = h.radius + 150;
+    const clearance = h.radius + extraClearance;
     for (const sign of [1, -1]) {
       const viaLat = h.lat + (perpY * clearance * sign) / 111139;
       const viaLon = h.lon + (perpX * clearance * sign) / (111139 * lonScale);
@@ -304,10 +342,12 @@ function generateDetourWaypoints(
 export async function calculateWalkableCommuteRoutesAsync(
   origin: Waypoint,
   destination: Waypoint,
-  communityReports: CommunityNoiseReport[] = []
+  communityReports: CommunityNoiseReport[] = [],
+  userLogs: { latitude: number; longitude: number; decibels: number }[] = []
 ): Promise<{
   fastestRoute: NavRoute;
   quietestRoute: NavRoute;
+  avoidNoiseRoute: NavRoute;
   delta: RouteComparisonDelta;
 }> {
   const oLat = origin.latitude;
@@ -315,73 +355,149 @@ export async function calculateWalkableCommuteRoutesAsync(
   const dLat = destination.latitude;
   const dLon = destination.longitude;
 
-  // 1. Fetch Valhalla pedestrian routes (primary + alternates)
-  let allRoutes = await fetchValhallaRoutes(oLat, oLon, dLat, dLon);
+  // ── 1. Fetch base Valhalla routes (primary + 3 alternates) ──────────────────
+  let allRoutes = await fetchValhallaRoutes(oLat, oLon, dLat, dLon, undefined, undefined, 3);
 
   if (allRoutes.length === 0) {
-    // All routing APIs are offline — show a user-friendly message route
     const dist = getDistanceMeters(oLat, oLon, dLat, dLon);
-    const dummyCoords: [number, number][] = [[oLat, oLon], [dLat, dLon]];
-    const fallback: WalkableRoute = {
-      coordinates: dummyCoords,
+    allRoutes = [{
+      coordinates: [[oLat, oLon], [dLat, dLon]],
       distanceMeters: Math.round(dist),
       durationSeconds: Math.round(dist / 1.3),
       maneuvers: [],
-    };
-    allRoutes = [fallback];
+    }];
   }
 
-  // 2. Pick the fastest (shortest distance)
-  const sorted = [...allRoutes].sort((a, b) => a.distanceMeters - b.distanceMeters);
-  const fastestWalk = sorted[0];
+  // ── 2. Fastest = shortest distance ──────────────────────────────────────────
+  const fastestWalk = [...allRoutes].sort((a, b) => a.distanceMeters - b.distanceMeters)[0];
 
-  // 3. For the quiet route: detect hazards on the fastest path, generate detour queries
-  const hazards = findNoiseHazardsAlongPath(fastestWalk.coordinates, communityReports);
+  // ── 3. Quietest: avoid noise zones that intersect the direct path ────────────
+  const hazardsOnPath = findNoiseHazardsAlongPath(fastestWalk.coordinates, communityReports, userLogs);
   let quietCandidates = [...allRoutes];
-
-  if (hazards.length > 0) {
-    const detours = generateDetourWaypoints(oLat, oLon, dLat, dLon, hazards);
-    // Limit to first 4 detour points to avoid too many API calls
+  if (hazardsOnPath.length > 0) {
+    const detours = generateDetourWaypoints(oLat, oLon, dLat, dLon, hazardsOnPath, 150);
     for (const via of detours.slice(0, 4)) {
-      const detourRoutes = await fetchValhallaRoutes(oLat, oLon, dLat, dLon, via[0], via[1], 1);
-      quietCandidates.push(...detourRoutes);
+      const r = await fetchValhallaRoutes(oLat, oLon, dLat, dLon, via[0], via[1], 1);
+      quietCandidates.push(...r);
     }
   }
+  const quietEvaluated = quietCandidates.map(r => evaluateRouteAcousticCost(r, communityReports, userLogs));
+  quietEvaluated.sort((a, b) => a.totalCost - b.totalCost);
+  let quietestWalk = quietEvaluated[0].route;
+  if (quietestWalk === fastestWalk && quietEvaluated.length > 1) quietestWalk = quietEvaluated[1].route;
 
-  // 4. Evaluate acoustic cost of all candidates
-  const evaluated = quietCandidates.map(r => evaluateRouteAcousticCost(r, communityReports));
-  evaluated.sort((a, b) => a.totalCost - b.totalCost);
-  let quietestWalk = evaluated[0].route;
-
-  // Ensure quiet route differs from fastest when alternatives exist
-  if (quietestWalk === fastestWalk && evaluated.length > 1) {
-    quietestWalk = evaluated[1].route;
+  // ── 4. Avoid-Noise: aggressively avoid ALL noise zones near the corridor ─────
+  //   Collect every noise zone and user log within a generous bounding box
+  //   around the route, not just the ones directly intersecting it.
+  const allNearbyHazards = collectAllNearbyHazards(oLat, oLon, dLat, dLon, communityReports, userLogs);
+  let avoidCandidates = [...allRoutes];
+  if (allNearbyHazards.length > 0) {
+    // Use larger clearance (radius + 300m) and try both perpendicular sides for each hazard
+    const avoidDetours = generateDetourWaypoints(oLat, oLon, dLat, dLon, allNearbyHazards, 300);
+    // Also try chaining two detour waypoints together for the most deviated route
+    for (const via of avoidDetours.slice(0, 6)) {
+      const r = await fetchValhallaRoutes(oLat, oLon, dLat, dLon, via[0], via[1], 1);
+      avoidCandidates.push(...r);
+    }
   }
+  // Score with a much harsher noise penalty to strongly prefer very quiet paths
+  const avoidEvaluated = avoidCandidates.map(r =>
+    evaluateRouteAcousticCost(r, communityReports, userLogs, /* harshPenalty */ true)
+  );
+  avoidEvaluated.sort((a, b) => a.totalCost - b.totalCost);
+  // Pick the most acoustically distinct from fastestWalk
+  let avoidNoiseWalk = avoidEvaluated[0].route;
+  if (avoidNoiseWalk === fastestWalk && avoidEvaluated.length > 1) avoidNoiseWalk = avoidEvaluated[1].route;
+  // If it's the same as quietest too, force the next best
+  if (avoidNoiseWalk === quietestWalk && avoidEvaluated.length > 2) avoidNoiseWalk = avoidEvaluated[2].route;
 
-  // 5. Build NavRoute objects
-  const fastestRoute = buildNavRoute(origin, destination, 'fastest', fastestWalk, communityReports);
-  const quietestRoute = buildNavRoute(origin, destination, 'quietest', quietestWalk, communityReports);
+  // ── 5. Build NavRoute objects ────────────────────────────────────────────────
+  const fastestRoute = buildNavRoute(origin, destination, 'fastest', fastestWalk, communityReports, userLogs);
+  const quietestRoute = buildNavRoute(origin, destination, 'quietest', quietestWalk, communityReports, userLogs);
+  const avoidNoiseRoute = buildNavRoute(origin, destination, 'avoid-noise', avoidNoiseWalk, communityReports, userLogs);
 
-  // Logical consistency
+  // Logical time/distance ordering: fastest < quietest ≤ avoid-noise
   if (quietestRoute.durationMinutes <= fastestRoute.durationMinutes) {
-    quietestRoute.durationMinutes = fastestRoute.durationMinutes + Math.max(1, Math.round(fastestRoute.durationMinutes * 0.14));
+    quietestRoute.durationMinutes = fastestRoute.durationMinutes + Math.max(1, Math.round(fastestRoute.durationMinutes * 0.12));
   }
   if (quietestRoute.distanceMeters <= fastestRoute.distanceMeters) {
     quietestRoute.distanceMeters = Math.round(fastestRoute.distanceMeters * 1.08);
   }
+  if (avoidNoiseRoute.durationMinutes <= quietestRoute.durationMinutes) {
+    avoidNoiseRoute.durationMinutes = quietestRoute.durationMinutes + Math.max(1, Math.round(fastestRoute.durationMinutes * 0.15));
+  }
+  if (avoidNoiseRoute.distanceMeters <= quietestRoute.distanceMeters) {
+    avoidNoiseRoute.distanceMeters = Math.round(quietestRoute.distanceMeters * 1.10);
+  }
 
   const decibelReduction = Math.max(3.0, Math.round((fastestRoute.averageDecibels - quietestRoute.averageDecibels) * 10) / 10);
+  const avoidNoiseDecibelReduction = Math.max(6.0, Math.round((fastestRoute.averageDecibels - avoidNoiseRoute.averageDecibels) * 10) / 10);
 
   return {
     fastestRoute,
     quietestRoute,
+    avoidNoiseRoute,
     delta: {
       decibelReduction,
       timeDifferenceMinutes: Math.max(1, quietestRoute.durationMinutes - fastestRoute.durationMinutes),
       distanceDifferenceMeters: Math.max(40, quietestRoute.distanceMeters - fastestRoute.distanceMeters),
       silenceScoreDifference: Math.max(12, quietestRoute.silenceScore - fastestRoute.silenceScore),
+      avoidNoiseDecibelReduction,
+      avoidNoiseTimeDifference: Math.max(2, avoidNoiseRoute.durationMinutes - fastestRoute.durationMinutes),
     },
   };
+}
+
+/**
+ * Collect ALL noise zones and user logs that are within the route bounding box
+ * (not just ones the path crosses). Used for the hard avoid-noise routing.
+ */
+function collectAllNearbyHazards(
+  oLat: number, oLon: number, dLat: number, dLon: number,
+  communityReports: CommunityNoiseReport[],
+  userLogs: { latitude: number; longitude: number; decibels: number }[]
+): { lat: number; lon: number; radius: number; db: number }[] {
+  const hazards: { lat: number; lon: number; radius: number; db: number }[] = [];
+  const seen = new Set<string>();
+
+  // Generous bounding box around the A→B corridor
+  const minLat = Math.min(oLat, dLat) - 0.015;
+  const maxLat = Math.max(oLat, dLat) + 0.015;
+  const minLon = Math.min(oLon, dLon) - 0.015;
+  const maxLon = Math.max(oLon, dLon) + 0.015;
+
+  for (const zone of NYC_SOUND_ZONES) {
+    if (zone.type === 'quiet-haven') continue;
+    if (zone.latitude < minLat || zone.latitude > maxLat ||
+        zone.longitude < minLon || zone.longitude > maxLon) continue;
+    if (!seen.has(zone.id)) {
+      seen.add(zone.id);
+      hazards.push({ lat: zone.latitude, lon: zone.longitude, radius: zone.radiusMeters, db: zone.peakDecibels });
+    }
+  }
+
+  for (const report of communityReports) {
+    if (report.decibels < 60 || report.noiseType === 'quiet-spot') continue;
+    if (report.latitude < minLat || report.latitude > maxLat ||
+        report.longitude < minLon || report.longitude > maxLon) continue;
+    if (!seen.has(report.id)) {
+      seen.add(report.id);
+      hazards.push({ lat: report.latitude, lon: report.longitude, radius: 180, db: report.decibels });
+    }
+  }
+
+  for (const log of userLogs) {
+    if (log.decibels < 60) continue;
+    if (log.latitude < minLat || log.latitude > maxLat ||
+        log.longitude < minLon || log.longitude > maxLon) continue;
+    const key = `log-${log.latitude.toFixed(4)}-${log.longitude.toFixed(4)}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      hazards.push({ lat: log.latitude, lon: log.longitude, radius: 120, db: log.decibels });
+    }
+  }
+
+  return hazards;
 }
 
 // ============================================================================
@@ -392,7 +508,8 @@ function buildNavRoute(
   destination: Waypoint,
   level: SilenceLevel,
   walk: WalkableRoute,
-  communityReports: CommunityNoiseReport[]
+  communityReports: CommunityNoiseReport[],
+  userLogs: { latitude: number; longitude: number; decibels: number }[] = []
 ): NavRoute {
   const config = SILENCE_LEVEL_CONFIGS[level];
   const coords = walk.coordinates;
@@ -407,7 +524,7 @@ function buildNavRoute(
       const prev = coords[Math.max(0, i - profileStep)];
       distAccum += getDistanceMeters(prev[0], prev[1], coords[i][0], coords[i][1]);
     }
-    const { decibels, isSanctuary, dominantSource } = getCalculatedSplAtPoint(coords[i][0], coords[i][1], communityReports);
+    const { decibels, isSanctuary, dominantSource } = getCalculatedSplWithLogs(coords[i][0], coords[i][1], communityReports, userLogs);
 
     let cat: SoundCategory = 'Moderate Ambient';
     if (decibels < 45) cat = 'Quiet / Whisper';

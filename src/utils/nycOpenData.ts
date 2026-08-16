@@ -1,4 +1,4 @@
-import { SoundDensityZone } from '../types';
+import { CommunityNoiseReport, SoundDensityZone } from '../types';
 
 export interface Nyc311Record {
   unique_key: string;
@@ -139,6 +139,72 @@ export async function fetchLiveNyc311NoiseComplaints(limit: number = 75): Promis
   return parseNyc311Records(REAL_NYC_311_BASELINE);
 }
 
+/**
+ * Fetch NYC 311 noise complaints and return them as CommunityNoiseReport[]
+ * so the pedestrian router can treat 311 hotspots as avoidable noise zones.
+ */
+export async function fetchNyc311AsCommunityReports(limit: number = 100): Promise<CommunityNoiseReport[]> {
+  let records: Nyc311Record[];
+  try {
+    const url = `https://data.cityofnewyork.us/resource/erm2-nwe9.json?$where=starts_with(complaint_type,%20'Noise')%20AND%20latitude%20IS%20NOT%20NULL&$order=created_date%20DESC&$limit=${limit}`;
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 5000);
+    const response = await fetch(url, { headers: { Accept: 'application/json' }, signal: controller.signal });
+    clearTimeout(t);
+    if (response.ok) {
+      const data = await response.json();
+      records = Array.isArray(data) && data.length > 0 ? data : REAL_NYC_311_BASELINE;
+    } else {
+      records = REAL_NYC_311_BASELINE;
+    }
+  } catch {
+    records = REAL_NYC_311_BASELINE;
+  }
+
+  return records
+    .filter((r) => r.latitude && r.longitude && !isNaN(Number(r.latitude)) && !isNaN(Number(r.longitude)))
+    .map((record): CommunityNoiseReport => {
+      const descriptor = record.descriptor || record.complaint_type || 'Noise Complaint';
+      const address = record.incident_address || record.street_name || 'NYC Street';
+
+      let decibels = 76;
+      let noiseType: CommunityNoiseReport['noiseType'] = 'sirens-traffic';
+
+      if (descriptor.toLowerCase().includes('jackhammer') || descriptor.toLowerCase().includes('construction') || descriptor.toLowerCase().includes('heavy machinery')) {
+        decibels = 88;
+        noiseType = 'construction';
+      } else if (descriptor.toLowerCase().includes('music') || descriptor.toLowerCase().includes('party') || descriptor.toLowerCase().includes('club')) {
+        decibels = 80;
+        noiseType = 'nightlife';
+      } else if (descriptor.toLowerCase().includes('horn') || descriptor.toLowerCase().includes('engine') || descriptor.toLowerCase().includes('vehicle')) {
+        decibels = 82;
+        noiseType = 'horn-exhaust';
+      } else if (descriptor.toLowerCase().includes('subway') || descriptor.toLowerCase().includes('train')) {
+        decibels = 85;
+        noiseType = 'subway-screech';
+      }
+
+      const hoursAgo = Math.round((Date.now() - new Date(record.created_date).getTime()) / 3600000);
+      const timeAgo = hoursAgo < 1 ? 'Just now' : hoursAgo < 24 ? `${hoursAgo}h ago` : `${Math.round(hoursAgo / 24)}d ago`;
+
+      return {
+        id: `nyc311-${record.unique_key}`,
+        zoneName: `311: ${descriptor} (${address})`,
+        noiseType,
+        latitude: parseFloat(record.latitude!),
+        longitude: parseFloat(record.longitude!),
+        decibels,
+        description: `${record.complaint_type}: ${descriptor} at ${address}, ${record.borough || 'NYC'}. Filed ${timeAgo}.`,
+        reportedAt: new Date(record.created_date).getTime(),
+        timeAgo,
+        upvotes: 0,
+        isUserReported: false,
+        reporterName: 'NYC 311 Official',
+        reporterBadge: `SR #${record.unique_key}`,
+      };
+    });
+}
+
 function parseNyc311Records(records: Nyc311Record[]): SoundDensityZone[] {
   return records
     .filter((r) => r.latitude && r.longitude && !isNaN(Number(r.latitude)) && !isNaN(Number(r.longitude)))
@@ -197,3 +263,4 @@ function parseNyc311Records(records: Nyc311Record[]): SoundDensityZone[] {
       };
     });
 }
+

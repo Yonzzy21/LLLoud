@@ -37,6 +37,7 @@ interface SoundMapProps {
   activeRoute?: NavRoute | null;
   fastestRoute?: NavRoute | null;
   quietestRoute?: NavRoute | null;
+  avoidNoiseRoute?: NavRoute | null;
   origin?: Waypoint;
   destination?: Waypoint;
   simulationState?: NavigationSimulationState;
@@ -59,6 +60,7 @@ export const SoundMap: React.FC<SoundMapProps> = ({
   activeRoute,
   fastestRoute,
   quietestRoute,
+  avoidNoiseRoute,
   origin,
   destination,
   simulationState,
@@ -475,6 +477,21 @@ export const SoundMap: React.FC<SoundMapProps> = ({
       }
     }
 
+    // Render Avoid-Noise Route (cyan)
+    if (avoidNoiseRoute && avoidNoiseRoute.coordinates.length > 0) {
+      const isSelected = activeRoute?.silenceLevel === 'avoid-noise';
+      if (!isSelected) {
+        const poly = L.polyline(avoidNoiseRoute.coordinates, {
+          color: '#06b6d4',
+          weight: 3.5,
+          opacity: 0.45,
+          dashArray: '4, 8',
+        });
+        poly.bindTooltip(`Noise-Free Route (${avoidNoiseRoute.durationMinutes} min • ~${avoidNoiseRoute.averageDecibels} dB)`, { sticky: true });
+        routesGroup.addLayer(poly);
+      }
+    }
+
     // Render Active Route prominently
     if (activeRoute && activeRoute.coordinates.length > 0) {
       const glowLine = L.polyline(activeRoute.coordinates, {
@@ -518,7 +535,20 @@ export const SoundMap: React.FC<SoundMapProps> = ({
       destMarker.bindTooltip(`<b>End:</b> ${destination.name}`);
       routesGroup.addLayer(destMarker);
     }
-  }, [activeRoute, fastestRoute, quietestRoute, origin, destination]);
+
+    // Auto-fit map to show both markers (A and B) with padding
+    if (origin && destination) {
+      try {
+        const bounds = L.latLngBounds(
+          [origin.latitude, origin.longitude],
+          [destination.latitude, destination.longitude]
+        );
+        map.fitBounds(bounds, { padding: [60, 60], maxZoom: 16, animate: true });
+      } catch {
+        // ignore bounds errors
+      }
+    }
+  }, [activeRoute, fastestRoute, quietestRoute, avoidNoiseRoute, origin, destination]);
 
   // Update Simulation Walker Avatar
   useEffect(() => {

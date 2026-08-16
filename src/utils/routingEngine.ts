@@ -225,6 +225,8 @@ export function calculateTwoCommuteRoutes(
       timeDifferenceMinutes,
       distanceDifferenceMeters,
       silenceScoreDifference,
+      avoidNoiseDecibelReduction: Math.max(8, decibelReduction * 1.5),
+      avoidNoiseTimeDifference: Math.max(2, timeDifferenceMinutes + 2),
     },
   };
 }
