@@ -395,18 +395,12 @@ export async function calculateWalkableCommuteRoutesAsync(
       hazardsOnPath.map(h => ({ lat: h.lat, lon: h.lon, radius: h.radius }))
     );
     quietCandidates.push(...valhallaAvoidRoutes);
-
-    // Keep legacy detours as a secondary fallback
-    const detours = generateDetourWaypoints(oLat, oLon, dLat, dLon, hazardsOnPath, 150);
-    for (const via of detours.slice(0, 3)) {
-      const r = await fetchValhallaRoutes(oLat, oLon, dLat, dLon, via[0], via[1], 1);
-      quietCandidates.push(...r);
-    }
   }
 
-  // Actively try routing through nearby quiet havens (parks)
-  for (const haven of nearbyQuietHavens.slice(0, 3)) {
-    const r = await fetchValhallaRoutes(oLat, oLon, dLat, dLon, haven.lat, haven.lon, 1);
+  // Actively try routing through the single best nearby quiet haven (park) to minimize requests
+  if (nearbyQuietHavens.length > 0) {
+    const bestHaven = nearbyQuietHavens[0];
+    const r = await fetchValhallaRoutes(oLat, oLon, dLat, dLon, bestHaven.lat, bestHaven.lon, 1);
     quietCandidates.push(...r);
   }
 
@@ -427,21 +421,15 @@ export async function calculateWalkableCommuteRoutesAsync(
       oLat, oLon, dLat, dLon, 
       undefined, undefined, 
       3, 
-      allNearbyHazards.map(h => ({ lat: h.lat, lon: h.lon, radius: h.radius + 100 }))
+      allNearbyHazards.map(h => ({ lat: h.lat, lon: h.lon, radius: h.radius + 80 }))
     );
     avoidCandidates.push(...valhallaAvoidAllRoutes);
-
-    // Keep legacy detours as a secondary fallback
-    const avoidDetours = generateDetourWaypoints(oLat, oLon, dLat, dLon, allNearbyHazards, 300);
-    for (const via of avoidDetours.slice(0, 4)) {
-      const r = await fetchValhallaRoutes(oLat, oLon, dLat, dLon, via[0], via[1], 1);
-      avoidCandidates.push(...r);
-    }
   }
 
   // Also include the park/haven routes in Avoid-Noise candidates
-  for (const haven of nearbyQuietHavens.slice(0, 3)) {
-    const r = await fetchValhallaRoutes(oLat, oLon, dLat, dLon, haven.lat, haven.lon, 1);
+  if (nearbyQuietHavens.length > 0) {
+    const bestHaven = nearbyQuietHavens[0];
+    const r = await fetchValhallaRoutes(oLat, oLon, dLat, dLon, bestHaven.lat, bestHaven.lon, 1);
     avoidCandidates.push(...r);
   }
 
